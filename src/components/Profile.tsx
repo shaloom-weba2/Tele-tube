@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { db, doc, getDoc, collection, query, where, orderBy, onSnapshot, auth, handleFirestoreError, OperationType, updateDoc, increment, setDoc, deleteDoc, signOut, addDoc, storage, ref, uploadBytesResumable, getDownloadURL } from '../lib/firebase';
+import { db, doc, getDoc, getDocs, collection, query, where, orderBy, onSnapshot, auth, handleFirestoreError, OperationType, updateDoc, increment, setDoc, deleteDoc, signOut, addDoc, storage, ref, uploadBytesResumable, getDownloadURL, serverTimestamp } from '../lib/firebase';
 import PostCard from './PostCard';
-import { Grid, Play, Bookmark, Settings, UserPlus, UserMinus, X, Camera, LogOut, Heart } from 'lucide-react';
+import { Grid, Play, Bookmark, Settings, UserPlus, UserMinus, X, Camera, LogOut, Heart, MessageSquare } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function Profile() {
@@ -144,6 +144,47 @@ export default function Profile() {
     }
   };
 
+  const handleMessage = async () => {
+    if (!auth.currentUser || !userId) return;
+    
+    try {
+      // Check if chat already exists
+      const chatsRef = collection(db, 'chats');
+      const q = query(
+        chatsRef,
+        where('participants', 'array-contains', auth.currentUser.uid)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      let existingChatId = null;
+      
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.participants.includes(userId)) {
+          existingChatId = doc.id;
+        }
+      });
+      
+      if (existingChatId) {
+        navigate(`/messages/${existingChatId}`);
+      } else {
+        // Create new chat
+        const newChatRef = await addDoc(collection(db, 'chats'), {
+          participants: [auth.currentUser.uid, userId],
+          lastMessage: '',
+          lastMessageAt: serverTimestamp(),
+          unreadCount: {
+            [auth.currentUser.uid]: 0,
+            [userId]: 0
+          }
+        });
+        navigate(`/messages/${newChatRef.id}`);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'chats');
+    }
+  };
+
   if (loading) return <div className="p-8 text-center">Loading profile...</div>;
   if (!profile) return <div className="p-8 text-center">User not found</div>;
 
@@ -207,26 +248,35 @@ export default function Profile() {
                   </button>
                 </>
               ) : (
-                <button 
-                  onClick={handleFollow}
-                  className={`px-6 py-1.5 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 ${
-                    isFollowing 
-                      ? 'bg-gray-100 hover:bg-gray-200 text-black' 
-                      : 'bg-blue-500 hover:bg-blue-600 text-white'
-                  }`}
-                >
-                  {isFollowing ? (
-                    <>
-                      <UserMinus className="w-4 h-4" />
-                      Unfollow
-                    </>
-                  ) : (
-                    <>
-                      <UserPlus className="w-4 h-4" />
-                      Follow
-                    </>
-                  )}
-                </button>
+                <div className="flex gap-2 justify-center">
+                  <button 
+                    onClick={handleFollow}
+                    className={`px-6 py-1.5 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 ${
+                      isFollowing 
+                        ? 'bg-gray-100 hover:bg-gray-200 text-black' 
+                        : 'bg-blue-500 hover:bg-blue-600 text-white'
+                    }`}
+                  >
+                    {isFollowing ? (
+                      <>
+                        <UserMinus className="w-4 h-4" />
+                        Unfollow
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="w-4 h-4" />
+                        Follow
+                      </>
+                    )}
+                  </button>
+                  <button 
+                    onClick={handleMessage}
+                    className="px-6 py-1.5 bg-gray-100 hover:bg-gray-200 text-black rounded-lg text-sm font-semibold transition-colors flex items-center gap-2"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    Message
+                  </button>
+                </div>
               )}
             </div>
           </div>
