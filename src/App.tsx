@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { auth, onAuthStateChanged, db, collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc } from './lib/firebase';
 import Auth from './components/Auth';
@@ -10,8 +10,51 @@ import CreatePost from './components/CreatePost';
 import Notifications from './components/Notifications';
 import AdminDashboard from './components/AdminDashboard';
 import AdminLogin from './components/AdminLogin';
-import { Home, Search, PlusSquare, Play, MessageCircle, User, LogOut, Bell, Shield } from 'lucide-react';
+import { Home, Search, PlusSquare, Play, MessageCircle, User, LogOut, Bell, Shield, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center bg-gray-50">
+          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-6">
+            <AlertTriangle className="w-8 h-8" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Something went wrong</h1>
+          <p className="text-gray-600 mb-8 max-w-md mx-auto">
+            We've encountered an unexpected error. Please try refreshing the page.
+          </p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="px-6 py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 transition-all"
+          >
+            Refresh Page
+          </button>
+          {process.env.NODE_ENV === 'development' && (
+            <pre className="mt-8 p-4 bg-gray-100 rounded-lg text-left text-xs overflow-auto max-w-full">
+              {this.state.error?.toString()}
+            </pre>
+          )}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const [user, setUser] = useState(auth.currentUser);
@@ -26,17 +69,24 @@ export default function App() {
     let unsubscribeUserDoc: (() => void) | null = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      console.log('App: Auth state changed:', user?.email, 'Verified:', user?.emailVerified);
+      
       if (user) {
         // Listen to user document for role and verification status
         const userRef = doc(db, 'users', user.uid);
         unsubscribeUserDoc = onSnapshot(userRef, (docSnap) => {
-          const userData = docSnap.data();
-          setIsAdmin(userData?.role === 'admin' || user.email === 'shaloomoficial250@gmail.com');
-          setIsEmailVerified(user.emailVerified || userData?.emailVerified === true);
+          if (docSnap.exists()) {
+            const userData = docSnap.data();
+            console.log('App: User doc loaded:', userData.email, 'Verified:', userData.emailVerified);
+            setIsAdmin(userData?.role === 'admin' || user.email === 'shaloomoficial250@gmail.com');
+            setIsEmailVerified(user.emailVerified || userData?.emailVerified === true);
+          } else {
+            console.log('App: User doc does not exist yet');
+            setIsEmailVerified(user.emailVerified);
+          }
           setIsAuthReady(true);
         }, (error) => {
-          console.error("Error listening to user doc:", error);
-          // Fallback if doc doesn't exist yet (e.g. during signup)
+          console.error("App: Error listening to user doc:", error);
           setIsEmailVerified(user.emailVerified);
           setIsAuthReady(true);
         });
@@ -157,18 +207,21 @@ export default function App() {
 
   if (!isAuthReady) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      <div className="flex items-center justify-center min-h-screen bg-white">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-600"></div>
+          <p className="text-gray-500 font-medium animate-pulse">Loading SocialStream...</p>
+        </div>
       </div>
     );
   }
 
-  if (!user || !isEmailVerified) {
-    return <Auth />;
-  }
-
   return (
-    <Router>
+    <ErrorBoundary>
+      {!user || !isEmailVerified ? (
+        <Auth />
+      ) : (
+        <Router>
       <div className="flex min-h-screen bg-white">
         {/* Sidebar (Desktop) / Bottom Nav (Mobile) */}
         <nav className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 flex items-center justify-around px-4 z-50 md:relative md:h-screen md:w-64 md:flex-col md:items-start md:justify-start md:border-t-0 md:border-r md:px-6 md:py-8">
@@ -226,10 +279,12 @@ export default function App() {
               } 
             />
           </Routes>
-        </main>
-      </div>
-    </Router>
-  );
+          </main>
+        </div>
+      </Router>
+    )}
+  </ErrorBoundary>
+);
 }
 
 function NavLink({ to, icon, label, badge }: { to: string; icon: React.ReactElement; label: string; badge?: number }) {

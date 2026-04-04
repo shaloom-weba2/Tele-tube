@@ -40,26 +40,56 @@ export default function Auth() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log('Auth state changed:', user?.email, 'Verified:', user?.emailVerified);
       setUser(user);
-      if (user && user.emailVerified) {
-        // Create user document if it doesn't exist
-        const userRef = doc(db, 'users', user.uid);
-        const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) {
-          await setDoc(userRef, {
-            uid: user.uid,
-            displayName: user.displayName || user.email?.split('@')[0] || 'User',
-            email: user.email,
-            photoURL: user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName || user.email}&background=random`,
-            bio: '',
-            followersCount: 0,
-            followingCount: 0,
-            createdAt: serverTimestamp(),
-          });
+      
+      if (user) {
+        try {
+          // Create user document if it doesn't exist
+          const userRef = doc(db, 'users', user.uid);
+          const userSnap = await getDoc(userRef);
+          
+          if (!userSnap.exists()) {
+            console.log('Creating new user document for:', user.email);
+            await setDoc(userRef, {
+              uid: user.uid,
+              displayName: user.displayName || user.email?.split('@')[0] || 'User',
+              email: user.email,
+              photoURL: user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName || user.email}&background=random`,
+              bio: '',
+              followersCount: 0,
+              followingCount: 0,
+              createdAt: serverTimestamp(),
+              emailVerified: user.emailVerified // Sync with auth state
+            });
+          } else {
+            // Update emailVerified if it changed in auth but not in doc
+            const userData = userSnap.data();
+            if (user.emailVerified && !userData.emailVerified) {
+              await setDoc(userRef, { emailVerified: true }, { merge: true });
+            }
+          }
+
+          if (!user.emailVerified) {
+            setMode('verify');
+            // Ensure we have a code for this user
+            const q = query(collection(db, 'verification_codes'), where('email', '==', user.email));
+            const snap = await getDocs(q);
+            if (snap.empty) {
+              const code = Math.floor(100000 + Math.random() * 900000).toString();
+              await addDoc(collection(db, 'verification_codes'), {
+                email: user.email,
+                code,
+                createdAt: serverTimestamp()
+              });
+              setDebugCode(code);
+            } else {
+              setDebugCode(snap.docs[0].data().code);
+            }
+          }
+        } catch (err) {
+          console.error('Error in auth state sync:', err);
         }
-      } else if (user && !user.emailVerified) {
-        // If user is logged in but not verified, show verify screen
-        setMode('verify');
       }
       setLoading(false);
     });
@@ -70,10 +100,20 @@ export default function Auth() {
     try {
       setIsProcessing(true);
       setError('');
-      await signInWithPopup(auth, googleProvider);
+      console.log('Starting Google Sign-In...');
+      const result = await signInWithPopup(auth, googleProvider);
+      console.log('Google Sign-In successful:', result.user.email);
     } catch (error: any) {
-      console.error('Login error:', error);
-      setError(error.message || 'Failed to sign in with Google');
+      console.error('Google Login error:', error);
+      if (error.code === 'auth/unauthorized-domain') {
+        setError('This domain is not authorized for Google Sign-In. Please contact the administrator.');
+      } else if (error.code === 'auth/popup-blocked') {
+        setError('Sign-in popup was blocked by your browser. Please allow popups for this site.');
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        setError('Sign-in was cancelled. Please try again.');
+      } else {
+        setError(error.message || 'Failed to sign in with Google');
+      }
     } finally {
       setIsProcessing(false);
     }
