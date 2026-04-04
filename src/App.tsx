@@ -8,6 +8,7 @@ import ChatList from './components/ChatList';
 import ChatRoom from './components/ChatRoom';
 import CreatePost from './components/CreatePost';
 import Notifications from './components/Notifications';
+import UserSearch from './components/Search';
 import AdminDashboard from './components/AdminDashboard';
 import AdminLogin from './components/AdminLogin';
 import { Home, Search, PlusSquare, Play, MessageCircle, User, LogOut, Bell, Shield, AlertTriangle } from 'lucide-react';
@@ -54,6 +55,34 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     }
     return this.props.children;
   }
+}
+
+function SidebarSearchInput() {
+  const navigate = useNavigate();
+  const [term, setTerm] = useState('');
+
+  return (
+    <div className="hidden md:block mb-8 px-2">
+      <div className="relative group">
+        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+          <Search className="h-4 w-4 text-gray-400 group-focus-within:text-purple-500 transition-colors" />
+        </div>
+        <input
+          type="text"
+          placeholder="Search users..."
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          className="block w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl bg-gray-50 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:bg-white transition-all"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && term.trim()) {
+              navigate(`/explore?q=${encodeURIComponent(term)}`);
+              setTerm('');
+            }
+          }}
+        />
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -231,6 +260,8 @@ export default function App() {
             </h1>
           </Link>
 
+          <SidebarSearchInput />
+
           <div className="flex w-full justify-around md:flex-col md:gap-4">
             <NavLink to="/" icon={<Home />} label="Home" />
             <NavLink to="/explore" icon={<Search />} label="Explore" />
@@ -254,6 +285,7 @@ export default function App() {
         <main className="flex-1 pb-16 md:pb-0 overflow-y-auto">
           <Routes>
             <Route path="/" element={<Feed type="post" />} />
+            <Route path="/explore" element={<UserSearch />} />
             <Route path="/reels" element={<Feed type="reel" />} />
             <Route path="/profile/:userId" element={<Profile />} />
             <Route path="/messages" element={<ChatList />} />
