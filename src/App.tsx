@@ -20,22 +20,41 @@ export default function App() {
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
+  const [isEmailVerified, setIsEmailVerified] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      setIsAuthReady(true);
+    let unsubscribeUserDoc: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        // Check if user is admin
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        const userData = userDoc.data();
-        setIsAdmin(userData?.role === 'admin' || user.email === 'shaloomoficial250@gmail.com');
+        // Listen to user document for role and verification status
+        const userRef = doc(db, 'users', user.uid);
+        unsubscribeUserDoc = onSnapshot(userRef, (docSnap) => {
+          const userData = docSnap.data();
+          setIsAdmin(userData?.role === 'admin' || user.email === 'shaloomoficial250@gmail.com');
+          setIsEmailVerified(user.emailVerified || userData?.emailVerified === true);
+          setIsAuthReady(true);
+        }, (error) => {
+          console.error("Error listening to user doc:", error);
+          // Fallback if doc doesn't exist yet (e.g. during signup)
+          setIsEmailVerified(user.emailVerified);
+          setIsAuthReady(true);
+        });
       } else {
+        if (unsubscribeUserDoc) unsubscribeUserDoc();
+        setUser(null);
         setIsAdmin(false);
         setAdminAuthenticated(false);
+        setIsEmailVerified(false);
+        setIsAuthReady(true);
       }
+      setUser(user);
     });
-    return unsubscribe;
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeUserDoc) unsubscribeUserDoc();
+    };
   }, []);
 
   useEffect(() => {
@@ -144,7 +163,7 @@ export default function App() {
     );
   }
 
-  if (!user) {
+  if (!user || !isEmailVerified) {
     return <Auth />;
   }
 

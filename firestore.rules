@@ -133,6 +133,12 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    match /verification_codes/{codeId} {
+      allow read: if isAuthenticated() && request.auth.token.email == resource.data.email;
+      allow create: if isAuthenticated();
+      allow delete: if isAuthenticated() && request.auth.token.email == resource.data.email;
+    }
+
     match /test/connection {
       allow read: if true;
     }
