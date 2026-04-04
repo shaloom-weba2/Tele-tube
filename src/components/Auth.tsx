@@ -101,16 +101,25 @@ export default function Auth() {
       setIsProcessing(true);
       setError('');
       console.log('Starting Google Sign-In...');
+      
+      // Check if we are in an iframe
+      const inIframe = window.self !== window.top;
+      if (inIframe) {
+        console.log('App is running in an iframe, popup might be blocked.');
+      }
+
       const result = await signInWithPopup(auth, googleProvider);
       console.log('Google Sign-In successful:', result.user.email);
     } catch (error: any) {
       console.error('Google Login error:', error);
       if (error.code === 'auth/unauthorized-domain') {
-        setError('This domain is not authorized for Google Sign-In. Please contact the administrator.');
+        setError('This domain is not authorized for Google Sign-In. Please check your Firebase Console settings (Authentication > Settings > Authorized domains).');
       } else if (error.code === 'auth/popup-blocked') {
-        setError('Sign-in popup was blocked by your browser. Please allow popups for this site.');
+        setError('Sign-in popup was blocked by your browser. Please allow popups for this site or try opening the app in a new tab.');
       } else if (error.code === 'auth/popup-closed-by-user') {
         setError('Sign-in was cancelled. Please try again.');
+      } else if (error.code === 'auth/operation-not-allowed') {
+        setError('Google Sign-In is not enabled in your Firebase Console. Please enable it under Authentication > Sign-in method.');
       } else {
         setError(error.message || 'Failed to sign in with Google');
       }
@@ -129,26 +138,35 @@ export default function Auth() {
     try {
       setIsProcessing(true);
       setError('');
+      console.log('Starting Email Signup for:', email);
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      console.log('User created in Auth, updating profile...');
       await updateProfile(userCredential.user, { displayName });
       
       // Generate a verification code (6 digits)
       const code = Math.floor(100000 + Math.random() * 900000).toString();
       
       // Store code in Firestore
+      console.log('Storing verification code in Firestore...');
       await addDoc(collection(db, 'verification_codes'), {
         email,
         code,
         createdAt: serverTimestamp()
       });
 
-      // In a real app, you'd send this via email.
-      // For this demo, we'll show it as a debug message.
       setDebugCode(code);
       setMode('verify');
     } catch (error: any) {
       console.error('Signup error:', error);
-      setError(error.message || 'Failed to sign up');
+      if (error.code === 'auth/operation-not-allowed') {
+        setError('Email/Password authentication is not enabled in your Firebase Console. Please enable it under Authentication > Sign-in method.');
+      } else if (error.code === 'auth/email-already-in-use') {
+        setError('This email is already in use. Please sign in instead.');
+      } else if (error.code === 'auth/weak-password') {
+        setError('Password should be at least 6 characters.');
+      } else {
+        setError(error.message || 'Failed to sign up');
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -164,13 +182,15 @@ export default function Auth() {
     try {
       setIsProcessing(true);
       setError('');
+      console.log('Starting Email Login for:', email);
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      console.log('Email Login successful:', userCredential.user.email);
+      
       if (!userCredential.user.emailVerified) {
         // Check if we have a code for this user
         const q = query(collection(db, 'verification_codes'), where('email', '==', email));
         const snap = await getDocs(q);
         if (snap.empty) {
-          // Generate new code if none exists
           const code = Math.floor(100000 + Math.random() * 900000).toString();
           await addDoc(collection(db, 'verification_codes'), {
             email,
@@ -185,7 +205,13 @@ export default function Auth() {
       }
     } catch (error: any) {
       console.error('Login error:', error);
-      setError(error.message || 'Failed to sign in');
+      if (error.code === 'auth/operation-not-allowed') {
+        setError('Email/Password authentication is not enabled in your Firebase Console. Please enable it under Authentication > Sign-in method.');
+      } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        setError('Invalid email or password.');
+      } else {
+        setError(error.message || 'Failed to sign in');
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -258,10 +284,28 @@ export default function Auth() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-white">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-4">
         <div className="flex flex-col items-center gap-4">
           <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-600"></div>
           <p className="text-gray-500 font-medium animate-pulse">Initializing SocialStream...</p>
+        </div>
+        {/* Fallback if it hangs */}
+        <div className="mt-12 text-center max-w-xs">
+          <p className="text-xs text-gray-400 mb-4">Taking too long? Try refreshing or checking your connection.</p>
+          <div className="flex gap-4 justify-center">
+            <button 
+              onClick={() => window.location.reload()}
+              className="text-purple-600 text-sm font-bold hover:underline"
+            >
+              Refresh Page
+            </button>
+            <button 
+              onClick={() => signOut(auth)}
+              className="text-gray-500 text-sm font-bold hover:underline"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
       </div>
     );
