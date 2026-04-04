@@ -21,8 +21,9 @@ import {
   getDocs,
   deleteDoc
 } from '../lib/firebase';
-import { LogIn, LogOut, Mail, Lock, User as UserIcon, ShieldCheck, AlertCircle, ArrowRight, Github } from 'lucide-react';
+import { LogIn, LogOut, Mail, Lock, User as UserIcon, ShieldCheck, AlertCircle, ArrowRight, Github, Play, Video } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 type AuthMode = 'login' | 'signup' | 'verify';
 
@@ -128,10 +129,32 @@ export default function Auth() {
     }
   };
 
+  // --- VALIDATION HELPERS ---
+  const isValidEmail = (email: string) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  };
+
+  const isStrongPassword = (password: string) => {
+    // Firebase requires 6 chars, we'll enforce that + a basic check
+    return password.length >= 6;
+  };
+
   const handleEmailSignup = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // 1. Client-side validation
     if (!email || !password || !displayName) {
       setError('Please fill in all fields');
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    if (!isStrongPassword(password)) {
+      setError('Password must be at least 6 characters long');
       return;
     }
 
@@ -139,14 +162,19 @@ export default function Auth() {
       setIsProcessing(true);
       setError('');
       console.log('Starting Email Signup for:', email);
+
+      // 2. Firebase Auth: Create User
+      // This will fail with 'auth/operation-not-allowed' if Email/Password is disabled in Console
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      
       console.log('User created in Auth, updating profile...');
+      // 3. Update Auth Profile (Display Name)
       await updateProfile(userCredential.user, { displayName });
       
-      // Generate a verification code (6 digits)
+      // 4. Generate a verification code (6 digits)
       const code = Math.floor(100000 + Math.random() * 900000).toString();
       
-      // Store code in Firestore
+      // 5. Store code in Firestore for our custom verification flow
       console.log('Storing verification code in Firestore...');
       await addDoc(collection(db, 'verification_codes'), {
         email,
@@ -158,14 +186,27 @@ export default function Auth() {
       setMode('verify');
     } catch (error: any) {
       console.error('Signup error:', error);
+      
+      // 6. Detailed Error Handling (Production-ready)
       if (error.code === 'auth/operation-not-allowed') {
-        setError('Email/Password authentication is not enabled in your Firebase Console. Please enable it under Authentication > Sign-in method.');
+        setError(
+          'Email/Password authentication is not enabled in your Firebase Console. \n\n' +
+          'STEPS TO FIX:\n' +
+          '1. Go to https://console.firebase.google.com/\n' +
+          '2. Select your project: ' + (firebaseConfig.projectId) + '\n' +
+          '3. Click "Authentication" in the left sidebar\n' +
+          '4. Click the "Sign-in method" tab\n' +
+          '5. Click "Add new provider" or find "Email/Password"\n' +
+          '6. Enable "Email/Password" and click "Save"'
+        );
       } else if (error.code === 'auth/email-already-in-use') {
         setError('This email is already in use. Please sign in instead.');
       } else if (error.code === 'auth/weak-password') {
         setError('Password should be at least 6 characters.');
+      } else if (error.code === 'auth/network-request-failed') {
+        setError('Network error. Please check your internet connection.');
       } else {
-        setError(error.message || 'Failed to sign up');
+        setError(error.message || 'Failed to sign up. Please try again.');
       }
     } finally {
       setIsProcessing(false);
@@ -174,8 +215,15 @@ export default function Auth() {
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // 1. Client-side validation
     if (!email || !password) {
       setError('Please fill in all fields');
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setError('Please enter a valid email address');
       return;
     }
 
@@ -183,14 +231,19 @@ export default function Auth() {
       setIsProcessing(true);
       setError('');
       console.log('Starting Email Login for:', email);
+
+      // 2. Firebase Auth: Sign In
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       console.log('Email Login successful:', userCredential.user.email);
       
+      // 3. Check Verification Status
       if (!userCredential.user.emailVerified) {
-        // Check if we have a code for this user
+        // Check if we have a code for this user in Firestore
         const q = query(collection(db, 'verification_codes'), where('email', '==', email));
         const snap = await getDocs(q);
+        
         if (snap.empty) {
+          // Generate new code if none exists
           const code = Math.floor(100000 + Math.random() * 900000).toString();
           await addDoc(collection(db, 'verification_codes'), {
             email,
@@ -205,12 +258,24 @@ export default function Auth() {
       }
     } catch (error: any) {
       console.error('Login error:', error);
+      
+      // 4. Detailed Error Handling
       if (error.code === 'auth/operation-not-allowed') {
-        setError('Email/Password authentication is not enabled in your Firebase Console. Please enable it under Authentication > Sign-in method.');
+        setError(
+          'Email/Password authentication is not enabled in your Firebase Console. \n\n' +
+          'STEPS TO FIX:\n' +
+          '1. Go to https://console.firebase.google.com/\n' +
+          '2. Select your project: ' + (firebaseConfig.projectId) + '\n' +
+          '3. Click "Authentication" in the left sidebar\n' +
+          '4. Click the "Sign-in method" tab\n' +
+          '5. Enable "Email/Password" and click "Save"'
+        );
       } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
         setError('Invalid email or password.');
+      } else if (error.code === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Please try again later.');
       } else {
-        setError(error.message || 'Failed to sign in');
+        setError(error.message || 'Failed to sign in. Please try again.');
       }
     } finally {
       setIsProcessing(false);
@@ -227,12 +292,14 @@ export default function Auth() {
       
       const q = query(
         collection(db, 'verification_codes'), 
-        where('email', '==', auth.currentUser?.email),
-        where('code', '==', verificationCode)
+        where('email', '==', auth.currentUser?.email)
       );
       const snap = await getDocs(q);
 
-      if (!snap.empty) {
+      // Check code in memory to avoid composite index requirement
+      const matchingDoc = snap.docs.find(d => d.data().code === verificationCode);
+
+      if (matchingDoc) {
         // Code is correct!
         // In a real app, you'd use Firebase's built-in email verification.
         // Since we're simulating it, we'll just proceed.
@@ -287,7 +354,7 @@ export default function Auth() {
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-4">
         <div className="flex flex-col items-center gap-4">
           <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-600"></div>
-          <p className="text-gray-500 font-medium animate-pulse">Initializing SocialStream...</p>
+          <p className="text-gray-500 font-medium animate-pulse">Initializing TeleTube...</p>
         </div>
         {/* Fallback if it hangs */}
         <div className="mt-12 text-center max-w-xs">
@@ -334,10 +401,10 @@ export default function Auth() {
               animate={{ scale: 1 }}
               className="w-16 h-16 bg-gradient-to-br from-purple-600 to-pink-500 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-purple-200"
             >
-              <LogIn className="w-8 h-8 text-white" />
+              <Play className="w-8 h-8 text-white fill-current" />
             </motion.div>
             <h1 className="text-4xl font-black tracking-tight mb-3 bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">
-              SocialStream
+              TeleTube
             </h1>
             <p className="text-gray-500 font-medium">
               {mode === 'login' ? 'Welcome back! Please enter your details.' : 

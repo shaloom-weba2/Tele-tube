@@ -1,6 +1,6 @@
 {
-  "name": "SocialStream",
-  "description": "A full-featured social media platform for sharing posts, reels, and chatting with friends.",
+  "name": "TeleTube",
+  "description": "A high-performance video-sharing and social platform for creators and communities.",
   "requestFramePermissions": [
     "camera",
     "microphone"

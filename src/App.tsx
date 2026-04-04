@@ -210,7 +210,7 @@ export default function App() {
       <div className="flex items-center justify-center min-h-screen bg-white">
         <div className="flex flex-col items-center gap-4">
           <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-600"></div>
-          <p className="text-gray-500 font-medium animate-pulse">Loading SocialStream...</p>
+          <p className="text-gray-500 font-medium animate-pulse">Loading TeleTube...</p>
         </div>
       </div>
     );
@@ -227,7 +227,7 @@ export default function App() {
         <nav className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 flex items-center justify-around px-4 z-50 md:relative md:h-screen md:w-64 md:flex-col md:items-start md:justify-start md:border-t-0 md:border-r md:px-6 md:py-8">
           <Link to="/" className="hidden md:block mb-10">
             <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">
-              SocialStream
+              TeleTube
             </h1>
           </Link>
 
