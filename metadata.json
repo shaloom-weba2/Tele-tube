@@ -1,0 +1,8 @@
+{
+  "name": "SocialStream",
+  "description": "A full-featured social media platform for sharing posts, reels, and chatting with friends.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

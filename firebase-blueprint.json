@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "users": {
+      "title": "User",
+      "description": "A user profile in the application.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique identifier for the user." },
+        "displayName": { "type": "string", "description": "The user's display name." },
+        "email": { "type": "string", "format": "email", "description": "The user's email address." },
+        "photoURL": { "type": "string", "description": "The user's profile picture URL." },
+        "bio": { "type": "string", "description": "A short biography of the user." },
+        "isOnline": { "type": "boolean", "description": "Whether the user is currently online." },
+        "lastSeen": { "type": "string", "format": "date-time", "description": "The last time the user was active." },
+        "followersCount": { "type": "number", "description": "The number of followers the user has." },
+        "followingCount": { "type": "number", "description": "The number of users the user is following." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user account was created." }
+      },
+      "required": ["uid", "displayName", "email", "createdAt"]
+    },
+    "posts": {
+      "title": "Post",
+      "description": "A regular image or text post.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorPhoto": { "type": "string" },
+        "content": { "type": "string" },
+        "title": { "type": "string", "description": "The title of the post or reel." },
+        "hashtags": { "type": "array", "items": { "type": "string" }, "description": "A list of hashtags associated with the post." },
+        "location": { "type": "string", "description": "The location where the post was created." },
+        "imageUrl": { "type": "string" },
+        "type": { "type": "string", "enum": ["post", "reel"] },
+        "likesCount": { "type": "number" },
+        "commentsCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "type", "createdAt"]
+    },
+    "comments": {
+      "title": "Comment",
+      "description": "A comment on a post or reel.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "postId": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorPhoto": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["postId", "authorId", "text", "createdAt"]
+    },
+    "follows": {
+      "title": "Follow",
+      "description": "A follow relationship between two users.",
+      "type": "object",
+      "properties": {
+        "followerId": { "type": "string" },
+        "followingId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["followerId", "followingId", "createdAt"]
+    },
+    "chats": {
+      "title": "Chat",
+      "description": "A chat conversation between users.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "participants": { "type": "array", "items": { "type": "string" } },
+        "lastMessage": { "type": "string" },
+        "lastMessageAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["participants", "lastMessageAt"]
+    },
+    "messages": {
+      "title": "Message",
+      "description": "A message within a chat.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "chatId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "text": { "type": "string" },
+        "read": { "type": "boolean", "description": "Whether the message has been read by the recipient." },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["chatId", "senderId", "text", "createdAt"]
+    },
+    "stories": {
+      "title": "Story",
+      "description": "A temporary post that disappears after 24 hours.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorPhoto": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "imageUrl", "expiresAt", "createdAt"]
+    },
+    "admin_config": {
+      "title": "Admin Config",
+      "description": "Secure configuration for the admin dashboard.",
+      "type": "object",
+      "properties": {
+        "password": { "type": "string", "description": "The secure password for admin access." },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["password"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": "users", "description": "User profiles." },
+    "/posts/{postId}": { "schema": "posts", "description": "User posts and reels." },
+    "/posts/{postId}/comments/{commentId}": { "schema": "comments", "description": "Comments on posts." },
+    "/follows/{followId}": { "schema": "follows", "description": "Follow relationships." },
+    "/chats/{chatId}": { "schema": "chats", "description": "Chat conversations." },
+    "/chats/{chatId}/messages/{messageId}": { "schema": "messages", "description": "Messages in chats." },
+    "/stories/{storyId}": { "schema": "stories", "description": "Temporary stories." },
+    "/admin_config/{document}": { "schema": "admin_config", "description": "Admin configuration and authentication." }
+  }
+}
