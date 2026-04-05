@@ -11,6 +11,7 @@ interface Story {
   authorName: string;
   authorPhoto: string;
   imageUrl: string;
+  type?: 'image' | 'video';
   expiresAt: any;
   createdAt: any;
 }

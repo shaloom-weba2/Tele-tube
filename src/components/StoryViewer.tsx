@@ -8,6 +8,7 @@ interface Story {
   authorName: string;
   authorPhoto: string;
   imageUrl: string;
+  type?: 'image' | 'video';
   expiresAt: any;
   createdAt: any;
 }
@@ -102,12 +103,23 @@ export default function StoryViewer({ stories, onClose }: StoryViewerProps) {
 
         {/* Story Content */}
         <div className="w-full h-full flex items-center justify-center">
-          <img
-            src={currentStory.imageUrl}
-            alt="Story"
-            className="w-full h-full object-contain"
-            referrerPolicy="no-referrer"
-          />
+          {currentStory.type === 'video' ? (
+            <video
+              src={currentStory.imageUrl}
+              className="w-full h-full object-contain"
+              autoPlay
+              muted
+              playsInline
+              onEnded={handleNext}
+            />
+          ) : (
+            <img
+              src={currentStory.imageUrl}
+              alt="Story"
+              className="w-full h-full object-contain"
+              referrerPolicy="no-referrer"
+            />
+          )}
         </div>
 
         {/* Navigation Areas */}

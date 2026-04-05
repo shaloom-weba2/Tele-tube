@@ -5,7 +5,8 @@ import { motion } from 'motion/react';
 import imageCompression from 'browser-image-compression';
 
 export default function CreateStory({ onClose }: { onClose: () => void }) {
-  const [imageUrl, setImageUrl] = useState('');
+  const [mediaUrl, setMediaUrl] = useState('');
+  const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -15,26 +16,34 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
     let file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      alert('Please select an image file.');
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+
+    if (!isImage && !isVideo) {
+      alert('Please select an image or video file.');
       return;
     }
 
     setLoading(true);
-    setStatus('Optimizing image...');
     const user = auth.currentUser;
     if (!user) return;
 
-    // Compress image
-    try {
-      const options = {
-        maxSizeMB: 0.8,
-        maxWidthOrHeight: 1080,
-        useWebWorker: true,
-      };
-      file = await imageCompression(file, options);
-    } catch (error) {
-      console.error('Compression error:', error);
+    // Compress image if it's an image
+    if (isImage) {
+      setStatus('Optimizing image...');
+      try {
+        const options = {
+          maxSizeMB: 0.8,
+          maxWidthOrHeight: 1080,
+          useWebWorker: true,
+        };
+        file = await imageCompression(file, options);
+      } catch (error) {
+        console.error('Compression error:', error);
+      }
+      setMediaType('image');
+    } else {
+      setMediaType('video');
     }
 
     setStatus('Uploading to cloud...');
@@ -58,7 +67,7 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
       async () => {
         try {
           const downloadURL = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
-          setImageUrl(downloadURL);
+          setMediaUrl(downloadURL);
           setLoading(false);
           setStatus('');
           setUploadProgress(null);
@@ -75,12 +84,12 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!imageUrl) {
-      alert('Please select an image for your story.');
+    if (!mediaUrl) {
+      alert('Please select an image or video for your story.');
       return;
     }
 
-    if (imageUrl.startsWith('blob:') && uploadProgress !== null) {
+    if (mediaUrl.startsWith('blob:') && uploadProgress !== null) {
       alert('Please wait for the upload to complete.');
       return;
     }
@@ -100,7 +109,8 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
         authorId: user.uid,
         authorName: user.displayName,
         authorPhoto: user.photoURL,
-        imageUrl,
+        imageUrl: mediaUrl, // Keeping field name as imageUrl for compatibility or we can change it
+        type: mediaType,
         expiresAt,
         createdAt: serverTimestamp(),
       }));
@@ -131,7 +141,7 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
 
         <div className="p-6">
           <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Story Image</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Story Media</label>
             
             <div className="flex gap-2 mb-4">
               <button
@@ -139,13 +149,13 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
                 className="flex-1 flex items-center justify-center gap-2 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-semibold transition-colors"
               >
                 <Upload className="w-4 h-4" />
-                Upload from Device
+                Upload Image/Video
               </button>
               <input
                 type="file"
                 ref={fileInputRef}
                 className="hidden"
-                accept="image/*"
+                accept="image/*,video/*"
                 onChange={handleFileUpload}
               />
             </div>
@@ -154,10 +164,13 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
               <ImageIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
               <input
                 type="text"
-                placeholder="Or paste image URL..."
+                placeholder="Or paste media URL..."
                 className="w-full pl-10 pr-4 py-3 bg-gray-50 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                value={imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
+                value={mediaUrl}
+                onChange={(e) => {
+                  setMediaUrl(e.target.value);
+                  setMediaType(e.target.value.match(/\.(mp4|webm|ogg)$/i) ? 'video' : 'image');
+                }}
               />
             </div>
           </div>
@@ -177,16 +190,24 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {imageUrl && (
+          {mediaUrl && (
             <div className="mb-6 rounded-xl overflow-hidden border border-gray-200 aspect-[9/16] bg-gray-100 max-h-[400px] relative group">
-              <img
-                src={imageUrl}
-                alt="Preview"
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
+              {mediaType === 'image' ? (
+                <img
+                  src={mediaUrl}
+                  alt="Preview"
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <video
+                  src={mediaUrl}
+                  className="w-full h-full object-cover"
+                  controls
+                />
+              )}
               <button 
-                onClick={() => setImageUrl('')}
+                onClick={() => setMediaUrl('')}
                 className="absolute top-2 right-2 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
               >
                 <X className="w-4 h-4" />
@@ -196,7 +217,7 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
 
           <button
             onClick={handleSubmit}
-            disabled={loading || !imageUrl}
+            disabled={loading || !mediaUrl}
             className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-xl font-bold shadow-lg hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {loading && !uploadProgress ? 'Sharing...' : (

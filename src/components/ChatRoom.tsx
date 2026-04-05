@@ -18,8 +18,10 @@ interface Message {
   id: string;
   senderId: string;
   text?: string;
-  type: 'text' | 'image' | 'video' | 'audio';
+  type: 'text' | 'image' | 'video' | 'audio' | 'file';
   mediaUrl?: string;
+  fileName?: string;
+  fileSize?: number;
   duration?: number;
   read?: boolean;
   createdAt: any;
@@ -41,6 +43,80 @@ interface CallSession {
   status: 'ringing' | 'connected' | 'ended' | 'missed';
   createdAt: any;
 }
+
+const VoiceMessage = ({ url, duration, isMe }: { url: string; duration?: number; isMe: boolean }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const updateTime = () => setCurrentTime(audio.currentTime);
+    const onEnded = () => setIsPlaying(false);
+
+    audio.addEventListener('timeupdate', updateTime);
+    audio.addEventListener('ended', onEnded);
+
+    return () => {
+      audio.removeEventListener('timeupdate', updateTime);
+      audio.removeEventListener('ended', onEnded);
+    };
+  }, []);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play().catch(err => {
+        console.error('Audio playback failed:', err);
+        alert('Could not play audio. Please try again.');
+      });
+    }
+    setIsPlaying(!isPlaying);
+  };
+
+  const formatTime = (time: number) => {
+    const mins = Math.floor(time / 60);
+    const secs = Math.floor(time % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="flex items-center gap-3 min-w-[200px]">
+      <audio ref={audioRef} src={url} preload="metadata" />
+      <button 
+        type="button"
+        onClick={togglePlay}
+        className={`p-2 rounded-full transition-all ${isMe ? 'bg-white/20 hover:bg-white/30' : 'bg-purple-100 hover:bg-purple-200'}`}
+      >
+        {isPlaying ? (
+          <Pause className={`w-4 h-4 ${isMe ? 'text-white' : 'text-purple-600'}`} />
+        ) : (
+          <Play className={`w-4 h-4 ${isMe ? 'text-white' : 'text-purple-600'}`} />
+        )}
+      </button>
+      <div className="flex-1 flex flex-col gap-1">
+        <div className="h-1 bg-gray-200 rounded-full overflow-hidden">
+          <div 
+            className={`h-full transition-all duration-100 ${isMe ? 'bg-white' : 'bg-purple-600'}`} 
+            style={{ width: `${(currentTime / (duration || audioRef.current?.duration || 1)) * 100}%` }} 
+          />
+        </div>
+        <div className="flex justify-between items-center">
+          <span className={`text-[9px] ${isMe ? 'text-white/70' : 'text-gray-500'}`}>
+            {formatTime(currentTime)}
+          </span>
+          <span className={`text-[9px] ${isMe ? 'text-white/70' : 'text-gray-500'}`}>
+            {formatTime(duration || 0)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function ChatRoom() {
   const { chatId } = useParams();
@@ -218,13 +294,19 @@ export default function ChatRoom() {
       const pc = new RTCPeerConnection(peerConnectionConfig);
       peerConnectionRef.current = pc;
 
-      // Get local media
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: type === 'video'
-      });
-      setLocalStream(stream);
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      // Use existing stream if available (should be set by initiateCall or handleCallAction)
+      let stream = localStream;
+      
+      if (!stream) {
+        console.log('Local stream not found in state, requesting again...');
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: type === 'video'
+        });
+        setLocalStream(stream);
+      }
+      
+      stream.getTracks().forEach(track => pc.addTrack(track, stream!));
 
       // Handle remote stream
       pc.ontrack = (event) => {
@@ -347,7 +429,7 @@ export default function ChatRoom() {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSend = async (e?: React.FormEvent, mediaData?: { type: 'image' | 'video' | 'audio', url: string, duration?: number }) => {
+  const handleSend = async (e?: React.FormEvent, mediaData?: { type: 'image' | 'video' | 'audio' | 'file', url: string, duration?: number, fileName?: string, fileSize?: number }) => {
     if (e) e.preventDefault();
     if (!chatId || (!newMessage.trim() && !mediaData)) return;
 
@@ -370,6 +452,8 @@ export default function ChatRoom() {
       if (mediaData) {
         messageData.mediaUrl = mediaData.url;
         if (mediaData.duration) messageData.duration = mediaData.duration;
+        if (mediaData.fileName) messageData.fileName = mediaData.fileName;
+        if (mediaData.fileSize) messageData.fileSize = mediaData.fileSize;
         if (text) messageData.text = text;
       } else {
         messageData.text = text;
@@ -378,7 +462,7 @@ export default function ChatRoom() {
       await withTimeout(addDoc(collection(db, 'chats', chatId, 'messages'), messageData));
 
       const lastMsgText = mediaData 
-        ? (mediaData.type === 'image' ? '📷 Image' : mediaData.type === 'video' ? '🎥 Video' : '🎵 Voice Note')
+        ? (mediaData.type === 'image' ? '📷 Image' : mediaData.type === 'video' ? '🎥 Video' : mediaData.type === 'audio' ? '🎵 Voice Note' : `📁 ${mediaData.fileName || 'File'}`)
         : text;
 
       const unreadUpdates: any = {
@@ -404,40 +488,78 @@ export default function ChatRoom() {
     const file = e.target.files?.[0];
     if (!file || !chatId) return;
 
-    const type = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : null;
-    if (!type) return;
+    // Validation: File size limit (e.g., 20MB)
+    const MAX_FILE_SIZE = 20 * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+      alert('File is too large. Maximum size is 20MB.');
+      return;
+    }
 
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+    const type = isImage ? 'image' : isVideo ? 'video' : 'file';
+    
     setIsUploading(true);
-    const storageRef = ref(storage, `chats/${chatId}/${Date.now()}_${file.name}`);
-    const uploadTask = uploadBytesResumable(storageRef, file);
+    setUploadProgress(0);
+    
+    try {
+      const storageRef = ref(storage, `chats/${chatId}/${Date.now()}_${file.name}`);
+      const uploadTask = uploadBytesResumable(storageRef, file);
 
-    uploadTask.on('state_changed', 
-      (snapshot) => {
-        setUploadProgress((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-      }, 
-      (error) => {
-        console.error('Upload error:', error);
-        setIsUploading(false);
-      }, 
-      async () => {
-        try {
-          const downloadURL = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
-          await handleSend(undefined, { type, url: downloadURL });
-        } catch (error) {
-          console.error('Error sending media message:', error);
-          alert('Failed to send media message. Please try again.');
-        } finally {
+      uploadTask.on('state_changed', 
+        (snapshot) => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          setUploadProgress(progress);
+          console.log(`Upload is ${progress}% done`);
+        }, 
+        (error) => {
+          console.error('Upload error:', error);
           setIsUploading(false);
-          setUploadProgress(0);
+          alert('Upload failed. Please check your connection and try again.');
+        }, 
+        async () => {
+          try {
+            const downloadURL = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
+            await handleSend(undefined, { 
+              type, 
+              url: downloadURL,
+              fileName: file.name,
+              fileSize: file.size
+            });
+          } catch (error) {
+            console.error('Error getting download URL or sending message:', error);
+            alert('Failed to complete upload. Please try again.');
+          } finally {
+            setIsUploading(false);
+            setUploadProgress(0);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+          }
         }
-      }
-    );
+      );
+    } catch (error) {
+      console.error('Error initiating upload:', error);
+      setIsUploading(false);
+      alert('An error occurred while starting the upload.');
+    }
   };
 
   const startRecording = async () => {
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Your browser does not support audio recording.');
+        return;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      
+      // Determine supported mime type
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') 
+        ? 'audio/webm' 
+        : MediaRecorder.isTypeSupported('audio/ogg') 
+          ? 'audio/ogg' 
+          : 'audio/mp4';
+
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -446,28 +568,48 @@ export default function ChatRoom() {
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         const duration = recordingDuration;
         
-        setIsUploading(true);
-        const storageRef = ref(storage, `chats/${chatId}/voice_${Date.now()}.webm`);
-        const uploadTask = uploadBytesResumable(storageRef, audioBlob);
+        if (audioBlob.size < 1000) { // Less than 1KB, likely too short
+          console.log('Recording too short, discarding.');
+          return;
+        }
 
-        uploadTask.on('state_changed', null, (err) => {
-          console.error('Voice upload error:', err);
+        setIsUploading(true);
+        setUploadProgress(0);
+        
+        try {
+          const extension = mimeType.split('/')[1].split(';')[0];
+          const storageRef = ref(storage, `chats/${chatId}/voice_${Date.now()}.${extension}`);
+          const uploadTask = uploadBytesResumable(storageRef, audioBlob);
+
+          uploadTask.on('state_changed', 
+            (snapshot) => {
+              setUploadProgress((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+            },
+            (err) => {
+              console.error('Voice upload error:', err);
+              setIsUploading(false);
+              alert('Failed to upload voice note. Please try again.');
+            }, 
+            async () => {
+              try {
+                const url = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
+                await handleSend(undefined, { type: 'audio', url, duration });
+              } catch (error) {
+                console.error('Error sending audio message:', error);
+                alert('Failed to send voice note. Please try again.');
+              } finally {
+                setIsUploading(false);
+                setUploadProgress(0);
+              }
+            }
+          );
+        } catch (error) {
+          console.error('Error starting voice upload:', error);
           setIsUploading(false);
-          alert('Failed to upload voice note. Please try again.');
-        }, async () => {
-          try {
-            const url = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
-            await handleSend(undefined, { type: 'audio', url, duration });
-          } catch (error) {
-            console.error('Error sending audio message:', error);
-            alert('Failed to send voice note. Please try again.');
-          } finally {
-            setIsUploading(false);
-          }
-        });
+        }
 
         stream.getTracks().forEach(track => track.stop());
       };
@@ -478,8 +620,13 @@ export default function ChatRoom() {
       timerRef.current = setInterval(() => {
         setRecordingDuration(prev => prev + 1);
       }, 1000);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error starting recording:', err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        alert('Microphone access was denied. Please enable it in your settings.');
+      } else {
+        alert('Could not start recording. Please check your microphone.');
+      }
     }
   };
 
@@ -493,9 +640,23 @@ export default function ChatRoom() {
 
   const initiateCall = async (type: 'voice' | 'video') => {
     if (!chatId || !otherUser) return;
+    
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('Your browser does not support video/audio calling.');
+      return;
+    }
+
     try {
       setCallStatus('ringing');
-      const callRef = await addDoc(collection(db, 'chats', chatId, 'calls'), {
+      
+      // Request permissions immediately to ensure it's tied to user action
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: type === 'video'
+      });
+      setLocalStream(stream);
+
+      await addDoc(collection(db, 'chats', chatId, 'calls'), {
         callerId: auth.currentUser?.uid,
         receiverId: otherUser.uid,
         type,
@@ -505,10 +666,17 @@ export default function ChatRoom() {
       
       // We'll wait for the receiver to accept before setting up the peer connection
       // This is handled in the onSnapshot listener for calls
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error initiating call:', err);
       setCallStatus('idle');
-      alert('Failed to initiate call. Please try again.');
+      
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        alert('Camera or microphone permission was denied. Please enable them in your browser settings to make calls.');
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        alert('No camera or microphone found on your device.');
+      } else {
+        alert('Failed to initiate call. Please try again.');
+      }
     }
   };
 
@@ -517,8 +685,29 @@ export default function ChatRoom() {
     try {
       const callRef = doc(db, 'chats', chatId, 'calls', activeCall.id);
       if (action === 'accept') {
-        await updateDoc(callRef, { status: 'connected' });
-        // Peer connection setup will be triggered by the onSnapshot listener
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          alert('Your browser does not support video/audio calling.');
+          return;
+        }
+
+        try {
+          // Request permissions immediately during user interaction
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: activeCall.type === 'video'
+          });
+          setLocalStream(stream);
+          await updateDoc(callRef, { status: 'connected' });
+        } catch (err: any) {
+          console.error('Error accepting call:', err);
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            alert('Camera or microphone permission was denied. Please enable them in your browser settings to accept calls.');
+          } else {
+            alert('Could not access camera or microphone. Please check your settings.');
+          }
+          // If we can't get media, we should probably decline/end the call
+          await updateDoc(callRef, { status: 'missed' });
+        }
       } else if (action === 'decline' || action === 'end') {
         await updateDoc(callRef, { status: action === 'decline' ? 'missed' : 'ended' });
         endCall();
@@ -529,33 +718,36 @@ export default function ChatRoom() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto h-screen flex flex-col bg-gray-50 md:border-x md:border-gray-200 overflow-hidden">
+    <div className="max-w-4xl mx-auto h-screen h-[100dvh] flex flex-col bg-gray-50 md:border-x md:border-gray-200 overflow-hidden relative">
       {/* Header */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 p-4 flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/messages')} className="p-2 hover:bg-gray-100 rounded-full transition-colors md:hidden">
-            <ChevronLeft className="w-6 h-6" />
+      <header className="bg-white/95 backdrop-blur-md border-b border-gray-200 p-3 flex items-center justify-between sticky top-0 z-20 shadow-sm">
+        <div className="flex items-center gap-2">
+          <button onClick={() => navigate('/messages')} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+            <ChevronLeft className="w-6 h-6 text-gray-600" />
           </button>
+          
           <div className="flex items-center gap-3">
             <div className="relative">
               {otherUser?.photoURL ? (
                 <img
                   src={otherUser.photoURL}
                   alt={otherUser.displayName}
-                  className="w-10 h-10 rounded-full object-cover ring-2 ring-purple-100"
+                  className="w-10 h-10 rounded-full object-cover ring-2 ring-purple-100 shadow-sm"
                   referrerPolicy="no-referrer"
                 />
               ) : (
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold">
-                  {otherUser?.displayName?.charAt(0)}
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold shadow-sm">
+                  {otherUser?.displayName?.charAt(0) || '?'}
                 </div>
               )}
               {otherUser?.isOnline && (
                 <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full shadow-sm" />
               )}
             </div>
-            <div>
-              <h2 className="font-bold text-gray-900 leading-tight">{otherUser?.displayName || 'Chat'}</h2>
+            <div className="flex flex-col">
+              <h2 className="font-bold text-gray-900 leading-tight truncate max-w-[150px] sm:max-w-[200px]">
+                {otherUser?.displayName || 'Loading...'}
+              </h2>
               <p className="text-[10px] text-gray-500 flex items-center gap-1">
                 {otherUser?.isOnline ? (
                   <span className="text-green-500 font-medium animate-pulse">Online</span>
@@ -644,16 +836,28 @@ export default function ChatRoom() {
                     )}
 
                     {msg.type === 'audio' && (
+                      <VoiceMessage url={msg.mediaUrl!} duration={msg.duration} isMe={isMe} />
+                    )}
+
+                    {msg.type === 'file' && (
                       <div className="flex items-center gap-3 min-w-[200px]">
-                        <div className={`p-2 rounded-full ${isMe ? 'bg-white/20' : 'bg-purple-100'}`}>
-                          <Play className={`w-4 h-4 ${isMe ? 'text-white' : 'text-purple-600'}`} />
+                        <div className={`p-2 rounded-lg ${isMe ? 'bg-white/20' : 'bg-gray-100'}`}>
+                          <Paperclip className={`w-5 h-5 ${isMe ? 'text-white' : 'text-gray-600'}`} />
                         </div>
-                        <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
-                          <div className={`h-full ${isMe ? 'bg-white' : 'bg-purple-600'}`} style={{ width: '40%' }} />
+                        <div className="flex-1 overflow-hidden">
+                          <p className={`text-sm font-medium truncate ${isMe ? 'text-white' : 'text-gray-900'}`}>
+                            {msg.fileName || 'Document'}
+                          </p>
+                          <p className={`text-[10px] ${isMe ? 'text-white/70' : 'text-gray-500'}`}>
+                            {msg.fileSize ? `${(msg.fileSize / 1024 / 1024).toFixed(2)} MB` : 'Unknown size'}
+                          </p>
                         </div>
-                        <span className="text-[10px] opacity-70">
-                          {Math.floor(msg.duration || 0)}s
-                        </span>
+                        <button 
+                          onClick={() => window.open(msg.mediaUrl, '_blank')}
+                          className={`p-1.5 rounded-full hover:bg-black/5 transition-colors ${isMe ? 'text-white' : 'text-purple-600'}`}
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
                       </div>
                     )}
                   </div>
@@ -680,87 +884,89 @@ export default function ChatRoom() {
         <div ref={scrollRef} />
       </div>
 
-      {/* Uploading Progress */}
-      {isUploading && (
-        <div className="px-4 py-2 bg-white border-t border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-              <motion.div 
-                className="h-full bg-purple-600"
-                initial={{ width: 0 }}
-                animate={{ width: `${uploadProgress}%` }}
-              />
-            </div>
-            <span className="text-[10px] font-bold text-purple-600">{Math.round(uploadProgress)}%</span>
-          </div>
-        </div>
-      )}
-
-      {/* Input Area */}
-      <div className="p-4 bg-white border-t border-gray-200">
-        <form onSubmit={handleSend} className="flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            <button 
-              type="button" 
-              onClick={() => fileInputRef.current?.click()}
-              className="p-2 hover:bg-gray-100 rounded-full text-gray-500 transition-colors"
-            >
-              <Paperclip className="w-5 h-5" />
-            </button>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              onChange={handleFileUpload} 
-              className="hidden" 
-              accept="image/*,video/*"
-            />
-          </div>
-
-          <div className="flex-1 relative flex items-center">
-            {isRecording ? (
-              <div className="flex-1 bg-red-50 text-red-600 rounded-2xl px-4 py-2.5 flex items-center justify-between animate-pulse">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-red-600 rounded-full" />
-                  <span className="text-sm font-medium">Recording {recordingDuration}s</span>
-                </div>
-                <button type="button" onClick={stopRecording} className="p-1 hover:bg-red-100 rounded-full">
-                  <Square className="w-4 h-4 fill-current" />
-                </button>
+      {/* Bottom Section (Progress + Input) */}
+      <div className="sticky bottom-0 z-20 bg-white border-t border-gray-200">
+        {/* Uploading Progress */}
+        {isUploading && (
+          <div className="px-4 py-2 bg-white border-b border-gray-100">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <motion.div 
+                  className="h-full bg-purple-600"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${uploadProgress}%` }}
+                />
               </div>
-            ) : (
-              <input
-                type="text"
-                placeholder="Type a message..."
-                className="w-full bg-gray-100 border-none rounded-2xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-purple-500/20 transition-all"
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-              />
-            )}
+              <span className="text-[10px] font-bold text-purple-600">{Math.round(uploadProgress)}%</span>
+            </div>
           </div>
+        )}
 
-          <div className="flex items-center gap-1">
-            {!newMessage.trim() && !isRecording ? (
+        {/* Input Area */}
+        <div className="p-4">
+          <form onSubmit={handleSend} className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <button 
                 type="button" 
-                onMouseDown={startRecording}
-                onMouseUp={stopRecording}
-                onTouchStart={startRecording}
-                onTouchEnd={stopRecording}
-                className="p-2.5 bg-purple-100 text-purple-600 rounded-full hover:bg-purple-200 transition-colors"
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 hover:bg-gray-100 rounded-full text-gray-500 transition-colors"
               >
-                <Mic className="w-5 h-5" />
+                <Paperclip className="w-5 h-5" />
               </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={!newMessage.trim() && !isRecording}
-                className="p-2.5 bg-purple-600 text-white rounded-full hover:bg-purple-700 disabled:opacity-50 transition-all shadow-md shadow-purple-200"
-              >
-                <Send className="w-5 h-5" />
-              </button>
-            )}
-          </div>
-        </form>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileUpload} 
+                className="hidden" 
+              />
+            </div>
+
+            <div className="flex-1 relative flex items-center">
+              {isRecording ? (
+                <div className="flex-1 bg-red-50 text-red-600 rounded-2xl px-4 py-2.5 flex items-center justify-between animate-pulse">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-red-600 rounded-full" />
+                    <span className="text-sm font-medium">Recording {recordingDuration}s</span>
+                  </div>
+                  <button type="button" onClick={stopRecording} className="p-1 hover:bg-red-100 rounded-full">
+                    <Square className="w-4 h-4 fill-current" />
+                  </button>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  placeholder="Type a message..."
+                  className="w-full bg-gray-100 border-none rounded-2xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-purple-500/20 transition-all"
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                />
+              )}
+            </div>
+
+            <div className="flex items-center gap-1">
+              {!newMessage.trim() && !isRecording ? (
+                <button 
+                  type="button" 
+                  onMouseDown={startRecording}
+                  onMouseUp={stopRecording}
+                  onTouchStart={startRecording}
+                  onTouchEnd={stopRecording}
+                  className="p-2.5 bg-purple-100 text-purple-600 rounded-full hover:bg-purple-200 transition-colors"
+                >
+                  <Mic className="w-5 h-5" />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!newMessage.trim() && !isRecording}
+                  className="p-2.5 bg-purple-600 text-white rounded-full hover:bg-purple-700 disabled:opacity-50 transition-all shadow-md shadow-purple-200"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
       </div>
 
       {/* Call Overlay */}

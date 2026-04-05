@@ -10,8 +10,8 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
   const [title, setTitle] = useState('');
   const [hashtags, setHashtags] = useState('');
   const [location, setLocation] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
-  const [remoteUrl, setRemoteUrl] = useState('');
+  const [mediaUrl, setMediaUrl] = useState('');
+  const [uploadedUrl, setUploadedUrl] = useState('');
   const [type, setType] = useState<'post' | 'reel'>('post');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
@@ -39,8 +39,8 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
     }
 
     const localUrl = URL.createObjectURL(file);
-    setImageUrl(localUrl);
-    setRemoteUrl('');
+    setMediaUrl(localUrl);
+    setUploadedUrl('');
     setType(isVideo ? 'reel' : 'post');
     setUploadProgress(0);
     setStatus(isImage ? 'Optimizing image...' : 'Preparing video...');
@@ -84,7 +84,7 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
       async () => {
         try {
           const downloadURL = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
-          setRemoteUrl(downloadURL);
+          setUploadedUrl(downloadURL);
           setUploadProgress(null);
           setStatus('');
           uploadTaskRef.current = null;
@@ -100,8 +100,6 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
               pendingPostRef.current = null;
             } catch (err) {
               console.error('Error creating pending post:', err);
-              // Since the modal is already closed, we can't show an alert easily here
-              // but we could use a global notification system if one existed.
             }
           }
         } catch (error) {
@@ -119,7 +117,7 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     
     // Validation
-    if (!content.trim() && !imageUrl && !title.trim()) {
+    if (!content.trim() && !mediaUrl && !title.trim()) {
       alert('Please add some content, a title, or an image/video.');
       return;
     }
@@ -152,22 +150,22 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
 
     try {
       // Case 1: Upload is already done or it's a manual URL
-      if (remoteUrl || (imageUrl && !imageUrl.startsWith('blob:'))) {
+      if (uploadedUrl || (mediaUrl && !mediaUrl.startsWith('blob:'))) {
         await withTimeout(addDoc(collection(db, 'posts'), {
           ...postData,
-          imageUrl: remoteUrl || imageUrl,
+          imageUrl: uploadedUrl || mediaUrl,
           createdAt: serverTimestamp(),
         }));
         onClose();
       } 
       // Case 2: Still uploading - save as pending and close modal immediately
-      else if (imageUrl && imageUrl.startsWith('blob:') && uploadProgress !== null) {
+      else if (mediaUrl && mediaUrl.startsWith('blob:') && uploadProgress !== null) {
         pendingPostRef.current = postData;
         onClose();
         // The uploadTask.on('complete') handler will take it from here
       } 
       // Case 3: Text-only post
-      else if (!imageUrl && (content.trim() || title.trim())) {
+      else if (!mediaUrl && (content.trim() || title.trim())) {
         await withTimeout(addDoc(collection(db, 'posts'), {
           ...postData,
           imageUrl: '',
@@ -176,7 +174,7 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
         onClose();
       }
       // Case 4: Image selected but upload hasn't started or failed
-      else if (imageUrl && imageUrl.startsWith('blob:') && uploadProgress === null) {
+      else if (mediaUrl && mediaUrl.startsWith('blob:') && uploadProgress === null) {
         setLoading(false);
         alert('Media is still being processed or upload failed. Please wait or try re-uploading.');
       }
@@ -192,7 +190,8 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
   };
 
   const handleVideoGenerated = (url: string) => {
-    setImageUrl(url);
+    setMediaUrl(url);
+    setUploadedUrl(url); // AI generated video is already a remote URL
     setType('reel');
     setShowGenerator(false);
   };
@@ -221,7 +220,7 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
           {!showGenerator ? (
             <button
               onClick={handleSubmit}
-              disabled={loading || (!content && !imageUrl)}
+              disabled={loading || (!content && !mediaUrl)}
               className="text-blue-500 font-bold hover:text-blue-600 disabled:opacity-50"
             >
               {loading ? (
@@ -356,8 +355,17 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
                       type="text"
                       placeholder="Or paste media URL..."
                       className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm"
-                      value={imageUrl}
-                      onChange={(e) => setImageUrl(e.target.value)}
+                      value={mediaUrl}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setMediaUrl(val);
+                        setUploadedUrl(''); // Reset uploaded URL if manual input
+                        if (val.match(/\.(mp4|webm|ogg)$/i)) {
+                          setType('reel');
+                        } else if (val.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+                          setType('post');
+                        }
+                      }}
                     />
                   </div>
 
@@ -376,15 +384,18 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
                     </div>
                   )}
 
-                  {imageUrl && (
+                  {mediaUrl && (
                     <div className="mt-4 rounded-xl overflow-hidden border border-gray-200 aspect-video bg-gray-100 relative group">
                       {type === 'post' ? (
-                        <img src={imageUrl} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        <img src={mediaUrl} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
-                        <video src={imageUrl} className="w-full h-full object-cover" muted controls />
+                        <video src={mediaUrl} className="w-full h-full object-cover" muted controls />
                       )}
                       <button 
-                        onClick={() => setImageUrl('')}
+                        onClick={() => {
+                          setMediaUrl('');
+                          setUploadedUrl('');
+                        }}
                         className="absolute top-2 right-2 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <X className="w-4 h-4" />

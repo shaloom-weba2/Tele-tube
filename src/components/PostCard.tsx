@@ -16,6 +16,7 @@ interface PostCardProps {
     hashtags?: string[];
     location?: string;
     imageUrl: string;
+    type?: 'post' | 'reel' | 'video';
     likesCount: number;
     commentsCount: number;
     createdAt: any;
@@ -153,20 +154,30 @@ export default function PostCard({ post }: PostCardProps) {
         </div>
       </div>
 
-      {/* Image */}
+      {/* Media */}
       {post.imageUrl && (
         <div className="relative aspect-square bg-gray-100">
-          <motion.img
-            initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            viewport={{ once: true }}
-            src={post.imageUrl}
-            alt="Post content"
-            className="w-full h-full object-cover"
-            referrerPolicy="no-referrer"
-            loading="lazy"
-            onDoubleClick={handleLike}
-          />
+          {post.type === 'reel' || post.type === 'video' || post.imageUrl.match(/\.(mp4|webm|ogg)$/i) ? (
+            <video
+              src={post.imageUrl}
+              className="w-full h-full object-cover"
+              controls
+              muted
+              playsInline
+            />
+          ) : (
+            <motion.img
+              initial={{ opacity: 0 }}
+              whileInView={{ opacity: 1 }}
+              viewport={{ once: true }}
+              src={post.imageUrl}
+              alt="Post content"
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              onDoubleClick={handleLike}
+            />
+          )}
         </div>
       )}
 
