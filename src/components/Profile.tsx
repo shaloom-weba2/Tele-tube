@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { db, doc, getDoc, getDocs, collection, query, where, orderBy, onSnapshot, auth, handleFirestoreError, OperationType, updateDoc, increment, setDoc, deleteDoc, signOut, addDoc, storage, ref, uploadBytesResumable, getDownloadURL, serverTimestamp, updateProfile } from '../lib/firebase';
+import { db, doc, getDoc, getDocs, collection, query, where, orderBy, onSnapshot, auth, handleFirestoreError, OperationType, updateDoc, increment, setDoc, deleteDoc, signOut, addDoc, storage, ref, uploadBytesResumable, getDownloadURL, serverTimestamp, updateProfile, withTimeout } from '../lib/firebase';
 import PostCard from './PostCard';
 import { Grid, Play, Bookmark, Settings, UserPlus, UserMinus, X, Camera, LogOut, Heart, MessageSquare } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -426,11 +426,11 @@ function EditProfileModal({ profile, onClose, onUpdate }: any) {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handleFileChange = async (file: File) => {
     if (!file || !auth.currentUser) return;
 
     if (file.size > 5 * 1024 * 1024) {
@@ -455,12 +455,34 @@ function EditProfileModal({ profile, onClose, onUpdate }: any) {
         setUploading(false);
       },
       async () => {
-        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-        setPhotoURL(downloadURL);
-        setUploading(false);
-        setUploadProgress(0);
+        try {
+          const downloadURL = await withTimeout(getDownloadURL(uploadTask.snapshot.ref), 30000);
+          setPhotoURL(downloadURL);
+          setUploading(false);
+          setUploadProgress(0);
+        } catch (err) {
+          console.error("Error getting profile download URL:", err);
+          setError("Failed to finalize upload. Please try again.");
+          setUploading(false);
+        }
       }
     );
+  };
+
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const onDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFileChange(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -510,7 +532,27 @@ function EditProfileModal({ profile, onClose, onUpdate }: any) {
             {saving ? 'Saving...' : 'Done'}
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+        <form 
+          onSubmit={handleSubmit} 
+          className="p-6 space-y-6 relative"
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+        >
+          <AnimatePresence>
+            {isDragging && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 z-50 bg-blue-500/10 backdrop-blur-[2px] border-2 border-dashed border-blue-500 rounded-b-2xl flex flex-col items-center justify-center pointer-events-none"
+              >
+                <Camera className="w-12 h-12 text-blue-500 mb-2 animate-bounce" />
+                <p className="text-blue-600 font-bold">Drop to change photo</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <div className="flex flex-col items-center gap-4">
             <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
               <img
@@ -539,7 +581,10 @@ function EditProfileModal({ profile, onClose, onUpdate }: any) {
             <input
               type="file"
               ref={fileInputRef}
-              onChange={handleFileChange}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFileChange(file);
+              }}
               accept="image/*"
               className="hidden"
             />

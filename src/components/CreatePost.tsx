@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { X, Image as ImageIcon, Film, MapPin, Smile, Wand2, ArrowLeft, Upload, Loader2 } from 'lucide-react';
-import { auth, db, collection, addDoc, serverTimestamp, storage, ref, uploadBytesResumable, getDownloadURL, handleFirestoreError, OperationType, withTimeout } from '../lib/firebase';
+import { auth, db, collection, addDoc, serverTimestamp, storage, ref, uploadBytesResumable, getDownloadURL, handleFirestoreError, OperationType } from '../lib/firebase';
+import { useUpload } from '../context/UploadContext';
 import { motion, AnimatePresence } from 'motion/react';
 import VideoGenerator from './VideoGenerator';
 import imageCompression from 'browser-image-compression';
@@ -15,34 +16,42 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
   const [type, setType] = useState<'post' | 'reel'>('post');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [showGenerator, setShowGenerator] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const uploadTaskRef = useRef<any>(null);
+  
+  const { startUpload, attachCallback, tasks } = useUpload();
+  const currentTask = tasks.find(t => t.id === activeTaskId);
+  const uploadProgress = currentTask?.progress ?? null;
 
-  const pendingPostRef = useRef<any>(null);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    let file = e.target.files?.[0];
+  const handleFileUpload = async (file: File) => {
     if (!file) return;
+    setError(null);
 
     const isVideo = file.type.startsWith('video/');
     const isImage = file.type.startsWith('image/');
 
     if (!isVideo && !isImage) {
-      alert('Please select an image or video file.');
+      setError('Please select an image or video file.');
       return;
     }
 
-    if (uploadTaskRef.current) {
-      uploadTaskRef.current.cancel();
+    // Size limits
+    if (isVideo && file.size > 50 * 1024 * 1024) {
+      setError('Video size must be less than 50MB.');
+      return;
+    }
+    if (isImage && file.size > 10 * 1024 * 1024) {
+      setError('Image size must be less than 10MB.');
+      return;
     }
 
     const localUrl = URL.createObjectURL(file);
     setMediaUrl(localUrl);
     setUploadedUrl('');
     setType(isVideo ? 'reel' : 'post');
-    setUploadProgress(0);
     setStatus(isImage ? 'Optimizing image...' : 'Preparing video...');
 
     const user = auth.currentUser;
@@ -64,53 +73,24 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
     }
 
     setStatus('Uploading...');
-    const storageRef = ref(storage, `uploads/${user.uid}/${Date.now()}_${uploadFile.name}`);
-    const uploadTask = uploadBytesResumable(storageRef, uploadFile);
-    uploadTaskRef.current = uploadTask;
+    const taskId = startUpload(uploadFile, `uploads/${user.uid}`);
+    setActiveTaskId(taskId);
+  };
 
-    uploadTask.on(
-      'state_changed',
-      (snapshot) => {
-        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        setUploadProgress(progress);
-      },
-      (error) => {
-        if (error.code === 'storage/canceled') return;
-        console.error('Upload error:', error);
-        setStatus('');
-        setUploadProgress(null);
-        alert('Upload failed. Please try again.');
-      },
-      async () => {
-        try {
-          const downloadURL = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
-          setUploadedUrl(downloadURL);
-          setUploadProgress(null);
-          setStatus('');
-          uploadTaskRef.current = null;
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
 
-          // If there's a pending post, create it now
-          if (pendingPostRef.current) {
-            try {
-              await withTimeout(addDoc(collection(db, 'posts'), {
-                ...pendingPostRef.current,
-                imageUrl: downloadURL,
-                createdAt: serverTimestamp(),
-              }));
-              pendingPostRef.current = null;
-            } catch (err) {
-              console.error('Error creating pending post:', err);
-            }
-          }
-        } catch (error) {
-          console.error('Error finalizing upload:', error);
-          setStatus('Finalization failed');
-          setUploadProgress(null);
-          uploadTaskRef.current = null;
-          alert('Failed to finalize upload. Please try again.');
-        }
-      }
-    );
+  const onDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFileUpload(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -118,17 +98,18 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
     
     // Validation
     if (!content.trim() && !mediaUrl && !title.trim()) {
-      alert('Please add some content, a title, or an image/video.');
+      setError('Please add some content, a title, or an image/video.');
       return;
     }
 
     const user = auth.currentUser;
     if (!user) {
-      alert('You must be logged in to share content.');
+      setError('You must be logged in to share content.');
       return;
     }
 
     setLoading(true);
+    setError(null);
 
     const hashtagList = hashtags
       .split(/[\s,]+/)
@@ -151,41 +132,46 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
     try {
       // Case 1: Upload is already done or it's a manual URL
       if (uploadedUrl || (mediaUrl && !mediaUrl.startsWith('blob:'))) {
-        await withTimeout(addDoc(collection(db, 'posts'), {
+        await addDoc(collection(db, 'posts'), {
           ...postData,
           imageUrl: uploadedUrl || mediaUrl,
           createdAt: serverTimestamp(),
-        }));
+        });
         onClose();
       } 
-      // Case 2: Still uploading - save as pending and close modal immediately
-      else if (mediaUrl && mediaUrl.startsWith('blob:') && uploadProgress !== null) {
-        pendingPostRef.current = postData;
+      // Case 2: Still uploading - attach callback and close modal immediately
+      else if (activeTaskId && currentTask?.status === 'uploading') {
+        attachCallback(activeTaskId, async (url) => {
+          await addDoc(collection(db, 'posts'), {
+            ...postData,
+            imageUrl: url,
+            createdAt: serverTimestamp(),
+          });
+        });
         onClose();
-        // The uploadTask.on('complete') handler will take it from here
       } 
       // Case 3: Text-only post
       else if (!mediaUrl && (content.trim() || title.trim())) {
-        await withTimeout(addDoc(collection(db, 'posts'), {
+        await addDoc(collection(db, 'posts'), {
           ...postData,
           imageUrl: '',
           createdAt: serverTimestamp(),
-        }));
+        });
         onClose();
       }
       // Case 4: Image selected but upload hasn't started or failed
-      else if (mediaUrl && mediaUrl.startsWith('blob:') && uploadProgress === null) {
+      else if (mediaUrl && mediaUrl.startsWith('blob:') && !activeTaskId) {
         setLoading(false);
-        alert('Media is still being processed or upload failed. Please wait or try re-uploading.');
+        setError('Media upload failed to start. Please try re-uploading.');
       }
       else {
         setLoading(false);
-        alert('Unable to share post. Please check your inputs.');
+        setError('Unable to share post. Please check your inputs.');
       }
     } catch (error) {
       setLoading(false);
       console.error('Error creating post:', error);
-      alert(error instanceof Error ? error.message : 'Failed to share post. Please try again.');
+      setError(error instanceof Error ? error.message : 'Failed to share post. Please try again.');
     }
   };
 
@@ -235,7 +221,37 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        <div className="p-4">
+        <div 
+          className="p-4 relative"
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+        >
+          <AnimatePresence>
+            {isDragging && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 z-50 bg-blue-500/10 backdrop-blur-[2px] border-2 border-dashed border-blue-500 rounded-b-2xl flex flex-col items-center justify-center pointer-events-none"
+              >
+                <Upload className="w-12 h-12 text-blue-500 mb-2 animate-bounce" />
+                <p className="text-blue-600 font-bold">Drop to upload media</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-4 p-3 bg-red-50 border border-red-100 text-red-600 text-sm rounded-xl flex items-center gap-2"
+            >
+              <X className="w-4 h-4 cursor-pointer" onClick={() => setError(null)} />
+              <span className="flex-1">{error}</span>
+            </motion.div>
+          )}
+
           <AnimatePresence mode="wait">
             {showGenerator ? (
               <motion.div
@@ -346,7 +362,10 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
                       ref={fileInputRef}
                       className="hidden"
                       accept="image/*,video/*"
-                      onChange={handleFileUpload}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleFileUpload(file);
+                      }}
                     />
                   </div>
 

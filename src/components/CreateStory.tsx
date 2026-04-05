@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { X, Image as ImageIcon, Send, Upload, Loader2 } from 'lucide-react';
-import { auth, db, collection, addDoc, serverTimestamp, storage, ref, uploadBytesResumable, getDownloadURL, withTimeout } from '../lib/firebase';
-import { motion } from 'motion/react';
+import { auth, db, collection, addDoc, serverTimestamp, storage, ref, uploadBytesResumable, getDownloadURL } from '../lib/firebase';
+import { useUpload } from '../context/UploadContext';
+import { motion, AnimatePresence } from 'motion/react';
 import imageCompression from 'browser-image-compression';
 
 export default function CreateStory({ onClose }: { onClose: () => void }) {
@@ -9,18 +10,35 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
   const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    let file = e.target.files?.[0];
+  const { startUpload, attachCallback, tasks } = useUpload();
+  const currentTask = tasks.find(t => t.id === activeTaskId);
+  const uploadProgress = currentTask?.progress ?? null;
+  const uploadedUrl = currentTask?.url ?? null;
+
+  const handleFileUpload = async (file: File) => {
     if (!file) return;
+    setError(null);
 
     const isImage = file.type.startsWith('image/');
     const isVideo = file.type.startsWith('video/');
 
     if (!isImage && !isVideo) {
-      alert('Please select an image or video file.');
+      setError('Please select an image or video file.');
+      return;
+    }
+
+    // Size limits
+    if (isVideo && file.size > 50 * 1024 * 1024) {
+      setError('Video size must be less than 50MB.');
+      return;
+    }
+    if (isImage && file.size > 10 * 1024 * 1024) {
+      setError('Image size must be less than 10MB.');
       return;
     }
 
@@ -47,79 +65,78 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
     }
 
     setStatus('Uploading to cloud...');
-    const storageRef = ref(storage, `stories/${user.uid}/${Date.now()}_${file.name}`);
-    const uploadTask = uploadBytesResumable(storageRef, file);
+    const taskId = startUpload(file, `stories/${user.uid}`);
+    setActiveTaskId(taskId);
+  };
 
-    uploadTask.on(
-      'state_changed',
-      (snapshot) => {
-        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        setUploadProgress(progress);
-        if (progress === 100) setStatus('Finalizing...');
-      },
-      (error) => {
-        console.error('Upload error:', error);
-        setLoading(false);
-        setStatus('');
-        setUploadProgress(null);
-        alert('Upload failed. Please try again.');
-      },
-      async () => {
-        try {
-          const downloadURL = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
-          setMediaUrl(downloadURL);
-          setLoading(false);
-          setStatus('');
-          setUploadProgress(null);
-        } catch (error) {
-          console.error('Error finalizing story upload:', error);
-          setLoading(false);
-          setStatus('Finalization failed');
-          setUploadProgress(null);
-          alert('Failed to finalize upload. Please try again.');
-        }
-      }
-    );
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const onDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFileUpload(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     if (!mediaUrl) {
-      alert('Please select an image or video for your story.');
+      setError('Please select an image or video for your story.');
       return;
     }
 
     if (mediaUrl.startsWith('blob:') && uploadProgress !== null) {
-      alert('Please wait for the upload to complete.');
+      setError('Please wait for the upload to complete.');
       return;
     }
 
     setLoading(true);
     try {
       const user = auth.currentUser;
-      if (!user) {
-        alert('You must be logged in to share a story.');
-        return;
-      }
-
+      if (!user) return;
+      
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 24);
 
-      await withTimeout(addDoc(collection(db, 'stories'), {
+      const storyData = {
         authorId: user.uid,
         authorName: user.displayName,
         authorPhoto: user.photoURL,
-        imageUrl: mediaUrl, // Keeping field name as imageUrl for compatibility or we can change it
         type: mediaType,
         expiresAt,
         createdAt: serverTimestamp(),
-      }));
-      onClose();
+      };
+
+      if (uploadedUrl || (mediaUrl && !mediaUrl.startsWith('blob:'))) {
+        await addDoc(collection(db, 'stories'), {
+          ...storyData,
+          imageUrl: uploadedUrl || mediaUrl,
+        });
+        onClose();
+      } else if (activeTaskId && currentTask?.status === 'uploading') {
+        attachCallback(activeTaskId, async (url) => {
+          await addDoc(collection(db, 'stories'), {
+            ...storyData,
+            imageUrl: url,
+          });
+        });
+        onClose();
+      } else {
+        setError('Please wait for the upload to complete or try again.');
+        setLoading(false);
+      }
     } catch (error) {
-      console.error('Error creating story:', error);
-      alert(error instanceof Error ? error.message : 'Failed to share story. Please try again.');
-    } finally {
       setLoading(false);
+      console.error('Error creating story:', error);
+      setError(error instanceof Error ? error.message : 'Failed to share story. Please try again.');
     }
   };
 
@@ -139,7 +156,37 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
           <div className="w-8" /> {/* Spacer */}
         </div>
 
-        <div className="p-6">
+        <div 
+          className="p-6 relative"
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+        >
+          <AnimatePresence>
+            {isDragging && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 z-50 bg-purple-500/10 backdrop-blur-[2px] border-2 border-dashed border-purple-500 rounded-b-2xl flex flex-col items-center justify-center pointer-events-none"
+              >
+                <Upload className="w-12 h-12 text-purple-500 mb-2 animate-bounce" />
+                <p className="text-purple-600 font-bold">Drop to upload story</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-4 p-3 bg-red-50 border border-red-100 text-red-600 text-sm rounded-xl flex items-center gap-2"
+            >
+              <X className="w-4 h-4 cursor-pointer" onClick={() => setError(null)} />
+              <span className="flex-1">{error}</span>
+            </motion.div>
+          )}
+
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">Story Media</label>
             
@@ -156,7 +203,10 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
                 ref={fileInputRef}
                 className="hidden"
                 accept="image/*,video/*"
-                onChange={handleFileUpload}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleFileUpload(file);
+                }}
               />
             </div>
 
