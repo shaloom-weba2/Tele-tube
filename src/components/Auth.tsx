@@ -349,6 +349,26 @@ export default function Auth() {
     }
   };
 
+  const handleDownload = (url: string, filename: string) => {
+    // Fallback behavior: Check if the link is reachable or provide a message
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    
+    // In a real app, we might check the URL first, but for now we trigger the download
+    // and provide a fallback message if it's a known issue
+    try {
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('Download failed:', err);
+      setError('Download failed. Please try again or contact support.');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-4">
@@ -589,22 +609,20 @@ export default function Auth() {
                   <div className="pt-6 border-t border-gray-100">
                     <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Download the App</p>
                     <div className="flex flex-col sm:flex-row gap-3">
-                      <a
-                        href="/downloads/teletube.apk"
-                        download
+                      <button
+                        onClick={() => handleDownload(`https://firebasestorage.googleapis.com/v0/b/${firebaseConfig.storageBucket}/o/downloads%2Fteletube.apk?alt=media`, 'teletube.apk')}
                         className="flex-1 flex items-center justify-center gap-2 py-3 px-4 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all"
                       >
                         <Play className="w-4 h-4 fill-current" />
                         Android App
-                      </a>
-                      <a
-                        href="/downloads/teletube-setup.exe"
-                        download
+                      </button>
+                      <button
+                        onClick={() => handleDownload(`https://firebasestorage.googleapis.com/v0/b/${firebaseConfig.storageBucket}/o/downloads%2Fteletube-setup.exe?alt=media`, 'teletube-setup.exe')}
                         className="flex-1 flex items-center justify-center gap-2 py-3 px-4 bg-gray-100 text-gray-900 rounded-xl text-sm font-bold hover:bg-gray-200 transition-all border border-gray-200"
                       >
                         <Video className="w-4 h-4" />
                         Windows App
-                      </a>
+                      </button>
                     </div>
                   </div>
                 </div>
