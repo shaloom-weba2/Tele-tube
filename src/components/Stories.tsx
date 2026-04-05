@@ -63,6 +63,7 @@ export default function Stories() {
               alt="Me"
               className="w-full h-full rounded-full object-cover"
               referrerPolicy="no-referrer"
+              loading="lazy"
             />
           </div>
           <div className="absolute bottom-0 right-0 bg-blue-500 text-white rounded-full p-1 border-2 border-white">
@@ -88,6 +89,7 @@ export default function Stories() {
                   alt={firstStory.authorName}
                   className="w-full h-full rounded-full object-cover"
                   referrerPolicy="no-referrer"
+                  loading="lazy"
                 />
               </div>
             </button>

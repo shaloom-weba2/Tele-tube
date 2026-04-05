@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { X, Image as ImageIcon, Send, Upload, Loader2 } from 'lucide-react';
-import { auth, db, collection, addDoc, serverTimestamp, storage, ref, uploadBytesResumable, getDownloadURL } from '../lib/firebase';
+import { auth, db, collection, addDoc, serverTimestamp, storage, ref, uploadBytesResumable, getDownloadURL, withTimeout } from '../lib/firebase';
 import { motion } from 'motion/react';
 import imageCompression from 'browser-image-compression';
 
@@ -56,38 +56,58 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
         alert('Upload failed. Please try again.');
       },
       async () => {
-        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-        setImageUrl(downloadURL);
-        setLoading(false);
-        setStatus('');
-        setUploadProgress(null);
+        try {
+          const downloadURL = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
+          setImageUrl(downloadURL);
+          setLoading(false);
+          setStatus('');
+          setUploadProgress(null);
+        } catch (error) {
+          console.error('Error finalizing story upload:', error);
+          setLoading(false);
+          setStatus('Finalization failed');
+          setUploadProgress(null);
+          alert('Failed to finalize upload. Please try again.');
+        }
       }
     );
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!imageUrl) return;
+    if (!imageUrl) {
+      alert('Please select an image for your story.');
+      return;
+    }
+
+    if (imageUrl.startsWith('blob:') && uploadProgress !== null) {
+      alert('Please wait for the upload to complete.');
+      return;
+    }
 
     setLoading(true);
     try {
       const user = auth.currentUser;
-      if (!user) return;
+      if (!user) {
+        alert('You must be logged in to share a story.');
+        return;
+      }
 
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 24);
 
-      await addDoc(collection(db, 'stories'), {
+      await withTimeout(addDoc(collection(db, 'stories'), {
         authorId: user.uid,
         authorName: user.displayName,
         authorPhoto: user.photoURL,
         imageUrl,
         expiresAt,
         createdAt: serverTimestamp(),
-      });
+      }));
       onClose();
     } catch (error) {
       console.error('Error creating story:', error);
+      alert(error instanceof Error ? error.message : 'Failed to share story. Please try again.');
     } finally {
       setLoading(false);
     }

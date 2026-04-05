@@ -64,6 +64,9 @@ service cloud.firestore {
     // Global calls rule for collectionGroup queries and subcollections
     match /{path=**}/calls/{callId} {
       allow read, write: if isAuthenticated();
+      match /{allSubcollections=**} {
+        allow read, write: if isAuthenticated();
+      }
     }
 
     match /users/{userId} {

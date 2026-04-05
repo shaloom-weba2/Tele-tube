@@ -140,17 +140,21 @@ export default function ReelCard({ reel }: ReelCardProps) {
         loop
         muted
         playsInline
+        preload="metadata"
         onClick={() => videoRef.current?.paused ? videoRef.current.play() : videoRef.current?.pause()}
       />
 
       {/* Overlay Info */}
       <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent text-white">
         <div className="flex items-center gap-3 mb-3">
-          <img
+          <motion.img
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
             src={reel.authorPhoto || `https://ui-avatars.com/api/?name=${reel.authorName}`}
             alt={reel.authorName}
             className="w-10 h-10 rounded-full border-2 border-white"
             referrerPolicy="no-referrer"
+            loading="lazy"
           />
           <div className="flex flex-col">
             <div className="flex items-center gap-2">

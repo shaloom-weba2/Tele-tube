@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { X, Image as ImageIcon, Film, MapPin, Smile, Wand2, ArrowLeft, Upload, Loader2 } from 'lucide-react';
-import { auth, db, collection, addDoc, serverTimestamp, storage, ref, uploadBytesResumable, getDownloadURL, handleFirestoreError, OperationType } from '../lib/firebase';
+import { auth, db, collection, addDoc, serverTimestamp, storage, ref, uploadBytesResumable, getDownloadURL, handleFirestoreError, OperationType, withTimeout } from '../lib/firebase';
 import { motion, AnimatePresence } from 'motion/react';
 import VideoGenerator from './VideoGenerator';
 import imageCompression from 'browser-image-compression';
@@ -82,24 +82,34 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
         alert('Upload failed. Please try again.');
       },
       async () => {
-        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-        setRemoteUrl(downloadURL);
-        setUploadProgress(null);
-        setStatus('');
-        uploadTaskRef.current = null;
+        try {
+          const downloadURL = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
+          setRemoteUrl(downloadURL);
+          setUploadProgress(null);
+          setStatus('');
+          uploadTaskRef.current = null;
 
-        // If there's a pending post, create it now
-        if (pendingPostRef.current) {
-          try {
-            await addDoc(collection(db, 'posts'), {
-              ...pendingPostRef.current,
-              imageUrl: downloadURL,
-              createdAt: serverTimestamp(),
-            });
-            pendingPostRef.current = null;
-          } catch (err) {
-            console.error('Error creating pending post:', err);
+          // If there's a pending post, create it now
+          if (pendingPostRef.current) {
+            try {
+              await withTimeout(addDoc(collection(db, 'posts'), {
+                ...pendingPostRef.current,
+                imageUrl: downloadURL,
+                createdAt: serverTimestamp(),
+              }));
+              pendingPostRef.current = null;
+            } catch (err) {
+              console.error('Error creating pending post:', err);
+              // Since the modal is already closed, we can't show an alert easily here
+              // but we could use a global notification system if one existed.
+            }
           }
+        } catch (error) {
+          console.error('Error finalizing upload:', error);
+          setStatus('Finalization failed');
+          setUploadProgress(null);
+          uploadTaskRef.current = null;
+          alert('Failed to finalize upload. Please try again.');
         }
       }
     );
@@ -107,10 +117,20 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content && !imageUrl && !title) return;
+    
+    // Validation
+    if (!content.trim() && !imageUrl && !title.trim()) {
+      alert('Please add some content, a title, or an image/video.');
+      return;
+    }
 
     const user = auth.currentUser;
-    if (!user) return;
+    if (!user) {
+      alert('You must be logged in to share content.');
+      return;
+    }
+
+    setLoading(true);
 
     const hashtagList = hashtags
       .split(/[\s,]+/)
@@ -121,49 +141,53 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
       authorId: user.uid,
       authorName: user.displayName,
       authorPhoto: user.photoURL,
-      content,
-      title,
-      location,
+      content: content.trim(),
+      title: title.trim(),
+      location: location.trim(),
       hashtags: hashtagList,
       type,
       likesCount: 0,
       commentsCount: 0,
     };
 
-    // If upload is done or it's a manual URL, create immediately
-    if (remoteUrl || (imageUrl && !imageUrl.startsWith('blob:'))) {
-      setLoading(true);
-      try {
-        await addDoc(collection(db, 'posts'), {
+    try {
+      // Case 1: Upload is already done or it's a manual URL
+      if (remoteUrl || (imageUrl && !imageUrl.startsWith('blob:'))) {
+        await withTimeout(addDoc(collection(db, 'posts'), {
           ...postData,
           imageUrl: remoteUrl || imageUrl,
           createdAt: serverTimestamp(),
-        });
+        }));
         onClose();
-      } catch (error) {
-        setLoading(false);
-        console.error('Error creating post:', error);
-        alert('Failed to share post. Please try again.');
-      }
-    } else if (imageUrl && uploadProgress !== null) {
-      // Still uploading - save as pending and close modal immediately
-      pendingPostRef.current = postData;
-      onClose();
-      // The uploadTask.on('complete') handler will take it from here
-    } else if (!imageUrl && content) {
-      // Text-only post
-      setLoading(true);
-      try {
-        await addDoc(collection(db, 'posts'), {
+      } 
+      // Case 2: Still uploading - save as pending and close modal immediately
+      else if (imageUrl && imageUrl.startsWith('blob:') && uploadProgress !== null) {
+        pendingPostRef.current = postData;
+        onClose();
+        // The uploadTask.on('complete') handler will take it from here
+      } 
+      // Case 3: Text-only post
+      else if (!imageUrl && (content.trim() || title.trim())) {
+        await withTimeout(addDoc(collection(db, 'posts'), {
           ...postData,
           imageUrl: '',
           createdAt: serverTimestamp(),
-        });
+        }));
         onClose();
-      } catch (error) {
-        setLoading(false);
-        console.error('Error creating post:', error);
       }
+      // Case 4: Image selected but upload hasn't started or failed
+      else if (imageUrl && imageUrl.startsWith('blob:') && uploadProgress === null) {
+        setLoading(false);
+        alert('Media is still being processed or upload failed. Please wait or try re-uploading.');
+      }
+      else {
+        setLoading(false);
+        alert('Unable to share post. Please check your inputs.');
+      }
+    } catch (error) {
+      setLoading(false);
+      console.error('Error creating post:', error);
+      alert(error instanceof Error ? error.message : 'Failed to share post. Please try again.');
     }
   };
 

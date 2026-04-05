@@ -325,7 +325,6 @@ export default function App() {
               <NavLink to="/messages" icon={<MessageCircle />} label="Messages" badge={unreadMessages} />
               <NavLink to="/notifications" icon={<Bell />} label="Notifications" badge={unreadNotifications} />
               <NavLink to={`/profile/${user.uid}`} icon={<User />} label="Profile" />
-              {isAdmin && <NavLink to="/admin" icon={<Shield />} label="Admin" />}
               <CreatePostTrigger />
             </div>
 

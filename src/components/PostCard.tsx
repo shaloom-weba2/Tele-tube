@@ -104,11 +104,14 @@ export default function PostCard({ post }: PostCardProps) {
       {/* Header */}
       <div className="flex items-center justify-between p-3">
         <div className="flex items-center gap-3">
-          <img
+          <motion.img
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
             src={post.authorPhoto || `https://ui-avatars.com/api/?name=${post.authorName}`}
             alt={post.authorName}
             className="w-8 h-8 rounded-full object-cover border border-gray-100"
             referrerPolicy="no-referrer"
+            loading="lazy"
           />
           <div className="flex flex-col">
             <span className="font-semibold text-sm leading-tight">{post.authorName}</span>
@@ -153,11 +156,15 @@ export default function PostCard({ post }: PostCardProps) {
       {/* Image */}
       {post.imageUrl && (
         <div className="relative aspect-square bg-gray-100">
-          <img
+          <motion.img
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
             src={post.imageUrl}
             alt="Post content"
             className="w-full h-full object-cover"
             referrerPolicy="no-referrer"
+            loading="lazy"
             onDoubleClick={handleLike}
           />
         </div>
