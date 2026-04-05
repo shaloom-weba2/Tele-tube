@@ -37,6 +37,9 @@ export default function ChatList() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setChats(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Chat[]);
       setLoading(false);
+    }, (error) => {
+      console.error('ChatList Error:', error);
+      setLoading(false);
     });
 
     return unsubscribe;

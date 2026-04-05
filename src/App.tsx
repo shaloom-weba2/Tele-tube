@@ -1,6 +1,6 @@
-import React, { useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { auth, onAuthStateChanged, db, collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc } from './lib/firebase';
+import React, { useState, useEffect } from 'react';
+import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
+import { auth, onAuthStateChanged, db, collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc, collectionGroup, limit, orderBy } from './lib/firebase';
 import Auth from './components/Auth';
 import Feed from './components/Feed';
 import Profile from './components/Profile';
@@ -11,50 +11,102 @@ import Notifications from './components/Notifications';
 import UserSearch from './components/Search';
 import AdminDashboard from './components/AdminDashboard';
 import AdminLogin from './components/AdminLogin';
-import { Home, Search, PlusSquare, Play, MessageCircle, User, LogOut, Bell, Shield, AlertTriangle } from 'lucide-react';
+import ErrorBoundary from './components/ErrorBoundary';
+import { Home, Search, PlusSquare, Play, MessageCircle, User, LogOut, Bell, Shield, AlertTriangle, Phone, PhoneOff, Video, MicOff, VideoOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: Error | null }> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
+function GlobalCallListener({ user }: { user: any }) {
+  const [activeCall, setActiveCall] = useState<any>(null);
+  const [caller, setCaller] = useState<any>(null);
+  const navigate = useNavigate();
 
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
+  useEffect(() => {
+    if (!user) return;
 
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("Uncaught error:", error, errorInfo);
-  }
+    const q = query(
+      collectionGroup(db, 'calls'),
+      where('receiverId', '==', user.uid),
+      where('status', '==', 'ringing'),
+      orderBy('createdAt', 'desc'),
+      limit(1)
+    );
 
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center bg-gray-50">
-          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-6">
-            <AlertTriangle className="w-8 h-8" />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Something went wrong</h1>
-          <p className="text-gray-600 mb-8 max-w-md mx-auto">
-            We've encountered an unexpected error. Please try refreshing the page.
-          </p>
-          <button 
-            onClick={() => window.location.reload()}
-            className="px-6 py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 transition-all"
-          >
-            Refresh Page
-          </button>
-          {process.env.NODE_ENV === 'development' && (
-            <pre className="mt-8 p-4 bg-gray-100 rounded-lg text-left text-xs overflow-auto max-w-full">
-              {this.state.error?.toString()}
-            </pre>
-          )}
-        </div>
-      );
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      if (!snapshot.empty) {
+        const firstDoc = snapshot.docs[0];
+        const callData = { id: firstDoc.id, ref: firstDoc.ref, ...firstDoc.data() } as any;
+        setActiveCall(callData);
+
+        // Fetch caller info
+        const callerSnap = await getDoc(doc(db, 'users', callData.callerId));
+        if (callerSnap.exists()) {
+          setCaller(callerSnap.data());
+        }
+      } else {
+        setActiveCall(null);
+        setCaller(null);
+      }
+    }, (error) => {
+      console.error('GlobalCallListener Error:', error);
+      // Don't throw here to avoid crashing the app, just log
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  const handleCallAction = async (action: 'accept' | 'decline') => {
+    if (!activeCall) return;
+    try {
+      if (action === 'accept') {
+        await updateDoc(activeCall.ref, { status: 'connected' });
+        // Navigate to the chat room where the call is happening
+        const chatId = activeCall.ref.parent.parent.id;
+        navigate(`/messages/${chatId}`);
+      } else {
+        await updateDoc(activeCall.ref, { status: 'missed' });
+      }
+    } catch (err) {
+      console.error('Error handling call action:', err);
     }
-    return this.props.children;
-  }
+  };
+
+  if (!activeCall) return null;
+
+  return (
+    <motion.div 
+      initial={{ y: -100, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: -100, opacity: 0 }}
+      className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] w-[90%] max-w-md bg-gray-900 text-white p-4 rounded-2xl shadow-2xl border border-white/10"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <img src={caller?.photoURL} className="w-12 h-12 rounded-full object-cover ring-2 ring-purple-500" />
+            <div className="absolute inset-0 rounded-full border-2 border-purple-500 animate-ping" />
+          </div>
+          <div>
+            <h3 className="font-bold">{caller?.displayName}</h3>
+            <p className="text-xs text-purple-300 animate-pulse">Incoming {activeCall.type} call...</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => handleCallAction('decline')}
+            className="p-3 bg-red-500 rounded-full hover:bg-red-600 transition-colors"
+          >
+            <PhoneOff className="w-5 h-5" />
+          </button>
+          <button 
+            onClick={() => handleCallAction('accept')}
+            className="p-3 bg-green-500 rounded-full hover:bg-green-600 transition-colors animate-bounce"
+          >
+            <Phone className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+    </motion.div>
+  );
 }
 
 function SidebarSearchInput() {
@@ -206,6 +258,8 @@ export default function App() {
     );
     const unsubscribeNotifications = onSnapshot(notificationsQuery, (snapshot) => {
       setUnreadNotifications(snapshot.size);
+    }, (error) => {
+      console.error('App: Notifications listener error:', error);
     });
 
     // Listen for unread messages
@@ -226,6 +280,8 @@ export default function App() {
         totalUnread += unreadCount;
       });
       setUnreadMessages(totalUnread);
+    }, (error) => {
+      console.error('App: Chats listener error:', error);
     });
 
     return () => {
@@ -246,77 +302,77 @@ export default function App() {
   }
 
   return (
-    <ErrorBoundary>
+    <div className="min-h-screen bg-white">
       {!user || !isEmailVerified ? (
         <Auth />
       ) : (
-        <Router>
-      <div className="flex min-h-screen bg-white">
-        {/* Sidebar (Desktop) / Bottom Nav (Mobile) */}
-        <nav className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 flex items-center justify-around px-4 z-50 md:relative md:h-screen md:w-64 md:flex-col md:items-start md:justify-start md:border-t-0 md:border-r md:px-6 md:py-8">
-          <Link to="/" className="hidden md:block mb-10">
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">
-              TeleTube
-            </h1>
-          </Link>
+        <div className="flex min-h-screen bg-white">
+          <GlobalCallListener user={user} />
+          {/* Sidebar (Desktop) / Bottom Nav (Mobile) */}
+          <nav className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 flex items-center justify-around px-4 z-50 md:relative md:h-screen md:w-64 md:flex-col md:items-start md:justify-start md:border-t-0 md:border-r md:px-6 md:py-8">
+            <Link to="/" className="hidden md:block mb-10">
+              <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">
+                TeleTube
+              </h1>
+            </Link>
 
-          <SidebarSearchInput />
+            <SidebarSearchInput />
 
-          <div className="flex w-full justify-around md:flex-col md:gap-4">
-            <NavLink to="/" icon={<Home />} label="Home" />
-            <NavLink to="/explore" icon={<Search />} label="Explore" />
-            <NavLink to="/reels" icon={<Play />} label="Reels" />
-            <NavLink to="/messages" icon={<MessageCircle />} label="Messages" badge={unreadMessages} />
-            <NavLink to="/notifications" icon={<Bell />} label="Notifications" badge={unreadNotifications} />
-            <NavLink to={`/profile/${user.uid}`} icon={<User />} label="Profile" />
-            <CreatePostTrigger />
-          </div>
+            <div className="flex w-full justify-around md:flex-col md:gap-4">
+              <NavLink to="/" icon={<Home />} label="Home" />
+              <NavLink to="/explore" icon={<Search />} label="Explore" />
+              <NavLink to="/reels" icon={<Play />} label="Reels" />
+              <NavLink to="/messages" icon={<MessageCircle />} label="Messages" badge={unreadMessages} />
+              <NavLink to="/notifications" icon={<Bell />} label="Notifications" badge={unreadNotifications} />
+              <NavLink to={`/profile/${user.uid}`} icon={<User />} label="Profile" />
+              {isAdmin && <NavLink to="/admin" icon={<Shield />} label="Admin" />}
+              <CreatePostTrigger />
+            </div>
 
-          <button
-            onClick={() => auth.signOut()}
-            className="hidden md:flex items-center gap-4 mt-auto p-3 w-full hover:bg-gray-100 rounded-lg transition-colors text-red-500"
-          >
-            <LogOut className="w-6 h-6" />
-            <span className="font-medium">Logout</span>
-          </button>
-        </nav>
+            <button
+              onClick={() => auth.signOut()}
+              className="hidden md:flex items-center gap-4 mt-auto p-3 w-full hover:bg-gray-100 rounded-lg transition-colors text-red-500"
+            >
+              <LogOut className="w-6 h-6" />
+              <span className="font-medium">Logout</span>
+            </button>
+          </nav>
 
-        {/* Main Content */}
-        <main className="flex-1 pb-16 md:pb-0 overflow-y-auto">
-          <Routes>
-            <Route path="/" element={<Feed type="post" />} />
-            <Route path="/explore" element={<UserSearch />} />
-            <Route path="/reels" element={<Feed type="reel" />} />
-            <Route path="/profile/:userId" element={<Profile />} />
-            <Route path="/messages" element={<ChatList />} />
-            <Route path="/messages/:chatId" element={<ChatRoom />} />
-            <Route path="/notifications" element={<Notifications />} />
-            <Route 
-              path="/admin" 
-              element={
-                isAdmin ? (
-                  adminAuthenticated ? (
-                    <AdminDashboard />
+          {/* Main Content */}
+          <main className="flex-1 pb-16 md:pb-0 overflow-y-auto">
+            <Routes>
+              <Route path="/" element={<Feed type="post" />} />
+              <Route path="/explore" element={<UserSearch />} />
+              <Route path="/reels" element={<Feed type="reel" />} />
+              <Route path="/profile/:userId" element={<Profile />} />
+              <Route path="/messages" element={<ChatList />} />
+              <Route path="/messages/:chatId" element={<ChatRoom />} />
+              <Route path="/notifications" element={<Notifications />} />
+              <Route 
+                path="/admin" 
+                element={
+                  isAdmin ? (
+                    adminAuthenticated ? (
+                      <AdminDashboard />
+                    ) : (
+                      <AdminLogin onLogin={() => setAdminAuthenticated(true)} />
+                    )
                   ) : (
-                    <AdminLogin onLogin={() => setAdminAuthenticated(true)} />
+                    <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center">
+                      <Shield className="w-16 h-16 text-gray-300 mb-4" />
+                      <h1 className="text-2xl font-bold text-gray-800">Access Denied</h1>
+                      <p className="text-gray-500 mt-2">You do not have permission to access this area.</p>
+                      <Link to="/" className="mt-6 text-blue-500 font-bold hover:underline">Return Home</Link>
+                    </div>
                   )
-                ) : (
-                  <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center">
-                    <Shield className="w-16 h-16 text-gray-300 mb-4" />
-                    <h1 className="text-2xl font-bold text-gray-800">Access Denied</h1>
-                    <p className="text-gray-500 mt-2">You do not have permission to access this area.</p>
-                    <Link to="/" className="mt-6 text-blue-500 font-bold hover:underline">Return Home</Link>
-                  </div>
-                )
-              } 
-            />
-          </Routes>
+                } 
+              />
+            </Routes>
           </main>
         </div>
-      </Router>
-    )}
-  </ErrorBoundary>
-);
+      )}
+    </div>
+  );
 }
 
 function NavLink({ to, icon, label, badge }: { to: string; icon: React.ReactElement; label: string; badge?: number }) {

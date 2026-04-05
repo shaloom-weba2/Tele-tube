@@ -20,11 +20,12 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadTaskRef = useRef<any>(null);
 
+  const pendingPostRef = useRef<any>(null);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     let file = e.target.files?.[0];
     if (!file) return;
 
-    // Basic validation
     const isVideo = file.type.startsWith('video/');
     const isImage = file.type.startsWith('image/');
 
@@ -33,15 +34,13 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
       return;
     }
 
-    // Cancel previous upload if any
     if (uploadTaskRef.current) {
       uploadTaskRef.current.cancel();
     }
 
-    // Immediate local preview
     const localUrl = URL.createObjectURL(file);
     setImageUrl(localUrl);
-    setRemoteUrl(''); // Reset remote URL for new upload
+    setRemoteUrl('');
     setType(isVideo ? 'reel' : 'post');
     setUploadProgress(0);
     setStatus(isImage ? 'Optimizing image...' : 'Preparing video...');
@@ -49,14 +48,14 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
     const user = auth.currentUser;
     if (!user) return;
 
-    // Compress image if it's an image
     let uploadFile = file;
-    if (isImage) {
+    if (isImage && file.size > 1024 * 1024) {
       try {
         const options = {
-          maxSizeMB: 0.8,
-          maxWidthOrHeight: 1280,
+          maxSizeMB: 1,
+          maxWidthOrHeight: 1920,
           useWebWorker: true,
+          initialQuality: 0.6,
         };
         uploadFile = await imageCompression(file, options);
       } catch (error) {
@@ -74,7 +73,6 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
       (snapshot) => {
         const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
         setUploadProgress(progress);
-        if (progress === 100) setStatus('Processing...');
       },
       (error) => {
         if (error.code === 'storage/canceled') return;
@@ -89,6 +87,20 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
         setUploadProgress(null);
         setStatus('');
         uploadTaskRef.current = null;
+
+        // If there's a pending post, create it now
+        if (pendingPostRef.current) {
+          try {
+            await addDoc(collection(db, 'posts'), {
+              ...pendingPostRef.current,
+              imageUrl: downloadURL,
+              createdAt: serverTimestamp(),
+            });
+            pendingPostRef.current = null;
+          } catch (err) {
+            console.error('Error creating pending post:', err);
+          }
+        }
       }
     );
   };
@@ -97,61 +109,61 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     if (!content && !imageUrl && !title) return;
 
-    setLoading(true);
-    try {
-      const user = auth.currentUser;
-      if (!user) return;
+    const user = auth.currentUser;
+    if (!user) return;
 
-      // If upload is still in progress, we need to wait or block
-      let finalUrl = remoteUrl;
-      if (!finalUrl && imageUrl && uploadProgress !== null) {
-        setStatus('Waiting for upload to finish...');
-        // We poll for remoteUrl or wait for the task
-        while (!uploadTaskRef.current?.snapshot?.ref && uploadProgress !== null) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        // If it's still not there, we might need to wait for the final download URL
-        // A better way is to wait for the remoteUrl state to change
-        // For simplicity in this context, we'll just block the button if not ready
-        if (!remoteUrl) {
-          setLoading(false);
-          return;
-        }
-        finalUrl = remoteUrl;
+    const hashtagList = hashtags
+      .split(/[\s,]+/)
+      .map(tag => tag.replace(/^#/, '').trim())
+      .filter(tag => tag.length > 0);
+
+    const postData = {
+      authorId: user.uid,
+      authorName: user.displayName,
+      authorPhoto: user.photoURL,
+      content,
+      title,
+      location,
+      hashtags: hashtagList,
+      type,
+      likesCount: 0,
+      commentsCount: 0,
+    };
+
+    // If upload is done or it's a manual URL, create immediately
+    if (remoteUrl || (imageUrl && !imageUrl.startsWith('blob:'))) {
+      setLoading(true);
+      try {
+        await addDoc(collection(db, 'posts'), {
+          ...postData,
+          imageUrl: remoteUrl || imageUrl,
+          createdAt: serverTimestamp(),
+        });
+        onClose();
+      } catch (error) {
+        setLoading(false);
+        console.error('Error creating post:', error);
+        alert('Failed to share post. Please try again.');
       }
-
-      // If it's a manual URL (pasted), use imageUrl
-      if (!finalUrl && imageUrl && !imageUrl.startsWith('blob:')) {
-        finalUrl = imageUrl;
-      }
-
-      // Parse hashtags: remove #, split by space/comma, filter empty
-      const hashtagList = hashtags
-        .split(/[\s,]+/)
-        .map(tag => tag.replace(/^#/, '').trim())
-        .filter(tag => tag.length > 0);
-
-      await addDoc(collection(db, 'posts'), {
-        authorId: user.uid,
-        authorName: user.displayName,
-        authorPhoto: user.photoURL,
-        content,
-        title,
-        location,
-        hashtags: hashtagList,
-        imageUrl: finalUrl,
-        type,
-        likesCount: 0,
-        commentsCount: 0,
-        createdAt: serverTimestamp(),
-      });
-      
-      // Success feedback
-      setLoading(false);
+    } else if (imageUrl && uploadProgress !== null) {
+      // Still uploading - save as pending and close modal immediately
+      pendingPostRef.current = postData;
       onClose();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'posts');
-      setLoading(false);
+      // The uploadTask.on('complete') handler will take it from here
+    } else if (!imageUrl && content) {
+      // Text-only post
+      setLoading(true);
+      try {
+        await addDoc(collection(db, 'posts'), {
+          ...postData,
+          imageUrl: '',
+          createdAt: serverTimestamp(),
+        });
+        onClose();
+      } catch (error) {
+        setLoading(false);
+        console.error('Error creating post:', error);
+      }
     }
   };
 
