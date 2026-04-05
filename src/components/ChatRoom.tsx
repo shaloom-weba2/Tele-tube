@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
+import { useChatSounds } from '../hooks/useChatSounds';
 
 interface Message {
   id: string;
@@ -136,6 +137,8 @@ export default function ChatRoom() {
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   
+  const { soundEnabled, toggleSound, playTypingSound, playNotificationSound } = useChatSounds();
+  
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -202,6 +205,18 @@ export default function ChatRoom() {
 
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
       const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Message[];
+      
+      // Play notification sound for new incoming messages
+      if (!snapshot.metadata.hasPendingWrites && snapshot.docChanges().length > 0) {
+        const hasNewIncoming = snapshot.docChanges().some(change => 
+          change.type === 'added' && 
+          change.doc.data().senderId !== auth.currentUser?.uid
+        );
+        if (hasNewIncoming) {
+          playNotificationSound();
+        }
+      }
+
       setMessages(newMessages);
 
       // Mark incoming as read
@@ -763,6 +778,13 @@ export default function ChatRoom() {
         
         <div className="flex items-center gap-1">
           <button 
+            onClick={toggleSound}
+            className="p-2.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"
+            title={soundEnabled ? 'Disable sounds' : 'Enable sounds'}
+          >
+            {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+          </button>
+          <button 
             onClick={() => initiateCall('voice')}
             className="p-2.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"
           >
@@ -938,7 +960,12 @@ export default function ChatRoom() {
                   placeholder="Type a message..."
                   className="w-full bg-gray-100 border-none rounded-2xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-purple-500/20 transition-all"
                   value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
+                  onChange={(e) => {
+                    setNewMessage(e.target.value);
+                    if (e.target.value.length > 0) {
+                      playTypingSound();
+                    }
+                  }}
                 />
               )}
             </div>

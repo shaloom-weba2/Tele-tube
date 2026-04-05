@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { db, doc, getDoc, getDocs, collection, query, where, orderBy, onSnapshot, auth, handleFirestoreError, OperationType, updateDoc, increment, setDoc, deleteDoc, signOut, addDoc, storage, ref, uploadBytesResumable, getDownloadURL, serverTimestamp } from '../lib/firebase';
+import { db, doc, getDoc, getDocs, collection, query, where, orderBy, onSnapshot, auth, handleFirestoreError, OperationType, updateDoc, increment, setDoc, deleteDoc, signOut, addDoc, storage, ref, uploadBytesResumable, getDownloadURL, serverTimestamp, updateProfile } from '../lib/firebase';
 import PostCard from './PostCard';
 import { Grid, Play, Bookmark, Settings, UserPlus, UserMinus, X, Camera, LogOut, Heart, MessageSquare } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -473,6 +473,13 @@ function EditProfileModal({ profile, onClose, onUpdate }: any) {
         bio,
         photoURL
       });
+      
+      // Sync with Firebase Auth
+      await updateProfile(auth.currentUser, {
+        displayName,
+        photoURL
+      });
+
       onUpdate({ displayName, bio, photoURL });
       onClose();
     } catch (error) {
@@ -522,6 +529,13 @@ function EditProfileModal({ profile, onClose, onUpdate }: any) {
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="text-blue-500 text-sm font-bold hover:text-blue-600 transition-colors"
+            >
+              Change Profile Photo
+            </button>
             <input
               type="file"
               ref={fileInputRef}

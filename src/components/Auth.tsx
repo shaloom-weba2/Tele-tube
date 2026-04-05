@@ -578,13 +578,35 @@ export default function Auth() {
                   </button>
                 </div>
 
-                <div className="text-center">
+                <div className="text-center space-y-6">
                   <button
                     onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
                     className="text-sm font-bold text-gray-500 hover:text-purple-600 transition-colors"
                   >
                     {mode === 'login' ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
                   </button>
+
+                  <div className="pt-6 border-t border-gray-100">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Download the App</p>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <a
+                        href="/downloads/teletube.apk"
+                        download
+                        className="flex-1 flex items-center justify-center gap-2 py-3 px-4 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all"
+                      >
+                        <Play className="w-4 h-4 fill-current" />
+                        Android App
+                      </a>
+                      <a
+                        href="/downloads/teletube-setup.exe"
+                        download
+                        className="flex-1 flex items-center justify-center gap-2 py-3 px-4 bg-gray-100 text-gray-900 rounded-xl text-sm font-bold hover:bg-gray-200 transition-all border border-gray-200"
+                      >
+                        <Video className="w-4 h-4" />
+                        Windows App
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}
