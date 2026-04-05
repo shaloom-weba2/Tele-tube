@@ -303,73 +303,97 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-white">
-      {!user || !isEmailVerified ? (
-        <Auth />
-      ) : (
-        <div className="flex min-h-screen bg-white">
-          <GlobalCallListener user={user} />
-          {/* Sidebar (Desktop) / Bottom Nav (Mobile) */}
-          <nav className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 flex items-center justify-around px-4 z-50 md:relative md:h-screen md:w-64 md:flex-col md:items-start md:justify-start md:border-t-0 md:border-r md:px-6 md:py-8">
-            <Link to="/" className="hidden md:block mb-10">
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">
-                TeleTube
-              </h1>
-            </Link>
+      <Routes>
+        {/* Dedicated Admin Route */}
+        <Route 
+          path="/admin/*" 
+          element={
+            adminAuthenticated ? (
+              <div className="flex min-h-screen bg-white">
+                <nav className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 flex items-center justify-around px-4 z-50 md:relative md:h-screen md:w-64 md:flex-col md:items-start md:justify-start md:border-t-0 md:border-r md:px-6 md:py-8">
+                  <Link to="/" className="hidden md:block mb-10">
+                    <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">
+                      TeleTube Admin
+                    </h1>
+                  </Link>
+                  <div className="flex w-full flex-col gap-4">
+                    <NavLink to="/admin" icon={<Shield />} label="Dashboard" />
+                    <NavLink to="/" icon={<Home />} label="View Site" />
+                  </div>
+                  <button
+                    onClick={() => setAdminAuthenticated(false)}
+                    className="hidden md:flex items-center gap-4 mt-auto p-3 w-full hover:bg-gray-100 rounded-lg transition-colors text-red-500"
+                  >
+                    <LogOut className="w-6 h-6" />
+                    <span className="font-medium">Admin Logout</span>
+                  </button>
+                </nav>
+                <main className="flex-1 overflow-y-auto">
+                  <AdminDashboard />
+                </main>
+              </div>
+            ) : (
+              <AdminLogin onLogin={() => setAdminAuthenticated(true)} />
+            )
+          } 
+        />
 
-            <SidebarSearchInput />
+        {/* Main App Routes */}
+        <Route 
+          path="*" 
+          element={
+            !user || !isEmailVerified ? (
+              <Auth />
+            ) : (
+              <div className="flex min-h-screen bg-white">
+                <GlobalCallListener user={user} />
+                {/* Sidebar (Desktop) / Bottom Nav (Mobile) */}
+                <nav className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 flex items-center justify-around px-4 z-50 md:relative md:h-screen md:w-64 md:flex-col md:items-start md:justify-start md:border-t-0 md:border-r md:px-6 md:py-8">
+                  <Link to="/" className="hidden md:block mb-10">
+                    <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">
+                      TeleTube
+                    </h1>
+                  </Link>
 
-            <div className="flex w-full justify-around md:flex-col md:gap-4">
-              <NavLink to="/" icon={<Home />} label="Home" />
-              <NavLink to="/explore" icon={<Search />} label="Explore" />
-              <NavLink to="/reels" icon={<Play />} label="Reels" />
-              <NavLink to="/messages" icon={<MessageCircle />} label="Messages" badge={unreadMessages} />
-              <NavLink to="/notifications" icon={<Bell />} label="Notifications" badge={unreadNotifications} />
-              <NavLink to={`/profile/${user.uid}`} icon={<User />} label="Profile" />
-              <CreatePostTrigger />
-            </div>
+                  <SidebarSearchInput />
 
-            <button
-              onClick={() => auth.signOut()}
-              className="hidden md:flex items-center gap-4 mt-auto p-3 w-full hover:bg-gray-100 rounded-lg transition-colors text-red-500"
-            >
-              <LogOut className="w-6 h-6" />
-              <span className="font-medium">Logout</span>
-            </button>
-          </nav>
+                  <div className="flex w-full justify-around md:flex-col md:gap-4">
+                    <NavLink to="/" icon={<Home />} label="Home" />
+                    <NavLink to="/explore" icon={<Search />} label="Explore" />
+                    <NavLink to="/reels" icon={<Play />} label="Reels" />
+                    <NavLink to="/messages" icon={<MessageCircle />} label="Messages" badge={unreadMessages} />
+                    <NavLink to="/notifications" icon={<Bell />} label="Notifications" badge={unreadNotifications} />
+                    <NavLink to={`/profile/${user.uid}`} icon={<User />} label="Profile" />
+                    {isAdmin && adminAuthenticated && <NavLink to="/admin" icon={<Shield />} label="Admin" />}
+                    <CreatePostTrigger />
+                  </div>
 
-          {/* Main Content */}
-          <main className="flex-1 pb-16 md:pb-0 overflow-y-auto">
-            <Routes>
-              <Route path="/" element={<Feed type="post" />} />
-              <Route path="/explore" element={<UserSearch />} />
-              <Route path="/reels" element={<Feed type="reel" />} />
-              <Route path="/profile/:userId" element={<Profile />} />
-              <Route path="/messages" element={<ChatList />} />
-              <Route path="/messages/:chatId" element={<ChatRoom />} />
-              <Route path="/notifications" element={<Notifications />} />
-              <Route 
-                path="/admin" 
-                element={
-                  isAdmin ? (
-                    adminAuthenticated ? (
-                      <AdminDashboard />
-                    ) : (
-                      <AdminLogin onLogin={() => setAdminAuthenticated(true)} />
-                    )
-                  ) : (
-                    <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center">
-                      <Shield className="w-16 h-16 text-gray-300 mb-4" />
-                      <h1 className="text-2xl font-bold text-gray-800">Access Denied</h1>
-                      <p className="text-gray-500 mt-2">You do not have permission to access this area.</p>
-                      <Link to="/" className="mt-6 text-blue-500 font-bold hover:underline">Return Home</Link>
-                    </div>
-                  )
-                } 
-              />
-            </Routes>
-          </main>
-        </div>
-      )}
+                  <button
+                    onClick={() => auth.signOut()}
+                    className="hidden md:flex items-center gap-4 mt-auto p-3 w-full hover:bg-gray-100 rounded-lg transition-colors text-red-500"
+                  >
+                    <LogOut className="w-6 h-6" />
+                    <span className="font-medium">Logout</span>
+                  </button>
+                </nav>
+
+                {/* Main Content */}
+                <main className="flex-1 pb-16 md:pb-0 overflow-y-auto">
+                  <Routes>
+                    <Route path="/" element={<Feed type="post" />} />
+                    <Route path="/explore" element={<UserSearch />} />
+                    <Route path="/reels" element={<Feed type="reel" />} />
+                    <Route path="/profile/:userId" element={<Profile />} />
+                    <Route path="/messages" element={<ChatList />} />
+                    <Route path="/messages/:chatId" element={<ChatRoom />} />
+                    <Route path="/notifications" element={<Notifications />} />
+                  </Routes>
+                </main>
+              </div>
+            )
+          }
+        />
+      </Routes>
     </div>
   );
 }

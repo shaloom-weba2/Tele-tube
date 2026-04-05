@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Shield, Lock, ArrowRight, AlertCircle } from 'lucide-react';
+import { Shield, Lock, ArrowRight, AlertCircle, User } from 'lucide-react';
 import { motion } from 'motion/react';
 import { db, doc, getDoc } from '../lib/firebase';
 
@@ -8,6 +8,7 @@ interface AdminLoginProps {
 }
 
 export default function AdminLogin({ onLogin }: AdminLoginProps) {
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -21,17 +22,18 @@ export default function AdminLogin({ onLogin }: AdminLoginProps) {
       const adminDoc = await getDoc(doc(db, 'admin_config', 'auth'));
       const adminData = adminDoc.data();
       
-      // Default password if not set
+      // Default credentials if not set
+      const correctIdentifier = adminData?.username || 'admin';
       const correctPassword = adminData?.password || 'admin123';
 
-      if (password === correctPassword) {
+      if (identifier === correctIdentifier && password === correctPassword) {
         onLogin(password);
       } else {
-        setError('Invalid admin password');
+        setError('Invalid admin credentials');
       }
     } catch (err) {
       console.error('Admin login error:', err);
-      setError('Failed to verify password. Please try again.');
+      setError('Failed to verify credentials. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -49,10 +51,25 @@ export default function AdminLogin({ onLogin }: AdminLoginProps) {
             <Shield className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold">Admin Access</h1>
-          <p className="text-purple-100 mt-2">Enter your secure password to continue</p>
+          <p className="text-purple-100 mt-2">Enter your secure credentials to continue</p>
         </div>
 
         <form onSubmit={handleSubmit} className="p-8 space-y-6">
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
+              <User className="w-4 h-4" />
+              Email or Username
+            </label>
+            <input
+              type="text"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              placeholder="admin"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500 outline-none transition-all"
+              required
+            />
+          </div>
+
           <div className="space-y-2">
             <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
               <Lock className="w-4 h-4" />

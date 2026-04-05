@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Heart, MessageCircle, Send, Music, UserPlus, MapPin, Bookmark, MoreVertical, Trash2 } from 'lucide-react';
+import { Heart, MessageCircle, Send, Music, UserPlus, MapPin, Bookmark, MoreVertical, Trash2, Volume2, VolumeX } from 'lucide-react';
 import { auth, db, doc, updateDoc, increment, setDoc, deleteDoc, getDoc, OperationType, handleFirestoreError, addDoc, collection } from '../lib/firebase';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -23,6 +23,7 @@ interface ReelCardProps {
 export default function ReelCard({ reel }: ReelCardProps) {
   const [isLiked, setIsLiked] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const [likes, setLikes] = useState(reel.likesCount);
   const [showMenu, setShowMenu] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -138,11 +139,22 @@ export default function ReelCard({ reel }: ReelCardProps) {
         src={reel.imageUrl}
         className="h-full w-full object-cover"
         loop
-        muted
+        muted={isMuted}
         playsInline
         preload="metadata"
         onClick={() => videoRef.current?.paused ? videoRef.current.play() : videoRef.current?.pause()}
       />
+
+      {/* Mute/Unmute Toggle */}
+      <button 
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsMuted(!isMuted);
+        }}
+        className="absolute top-4 right-4 p-2 bg-black/40 hover:bg-black/60 rounded-full text-white backdrop-blur-sm transition-all z-20"
+      >
+        {isMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
+      </button>
 
       {/* Overlay Info */}
       <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent text-white">
