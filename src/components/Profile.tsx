@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db, doc, getDoc, getDocs, collection, query, where, orderBy, onSnapshot, auth, handleFirestoreError, OperationType, updateDoc, increment, setDoc, deleteDoc, signOut, addDoc, storage, ref, uploadBytesResumable, getDownloadURL, serverTimestamp, updateProfile, withTimeout } from '../lib/firebase';
+import { useUpload } from '../context/UploadContext';
 import PostCard from './PostCard';
-import { Grid, Play, Bookmark, Settings, UserPlus, UserMinus, X, Camera, LogOut, Heart, MessageSquare, Volume2, VolumeX } from 'lucide-react';
+import { Grid, Play, Bookmark, Settings, UserPlus, UserMinus, X, Camera, LogOut, Heart, MessageSquare, Volume2, VolumeX, Bell, BellOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNotificationSound } from '../hooks/useNotificationSound';
+import { useBrowserNotifications } from '../hooks/useBrowserNotifications';
 
 export default function Profile() {
   const { userId } = useParams();
   const navigate = useNavigate();
   const { soundEnabled, toggleSound } = useNotificationSound();
+  const { permission, requestPermission } = useBrowserNotifications();
   const [profile, setProfile] = useState<any>(null);
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -224,9 +227,17 @@ export default function Profile() {
                   >
                     Edit Profile
                   </button>
-                  <button 
+                  <div 
                     onClick={() => setShowSettings(!showSettings)}
-                    className="p-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors relative"
+                    className="p-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors relative cursor-pointer"
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setShowSettings(!showSettings);
+                      }
+                    }}
                   >
                     <Settings className="w-5 h-5" />
                     <AnimatePresence>
@@ -235,7 +246,8 @@ export default function Profile() {
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: 10 }}
-                          className="absolute top-full right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50"
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute top-full right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 cursor-default"
                         >
                           <button 
                             onClick={toggleSound}
@@ -249,6 +261,32 @@ export default function Profile() {
                               <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${soundEnabled ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
                             </div>
                           </button>
+                          <button 
+                            onClick={async () => {
+                              if (permission === 'denied') {
+                                alert('Notification permission is blocked. Please enable it in your browser settings.');
+                                return;
+                              }
+                              await requestPermission();
+                            }}
+                            className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center justify-between text-sm font-semibold text-gray-700"
+                          >
+                            <div className="flex items-center gap-2">
+                              {permission === 'granted' ? <Bell className="w-4 h-4 text-blue-500" /> : permission === 'denied' ? <BellOff className="w-4 h-4 text-red-500" /> : <Bell className="w-4 h-4" />}
+                              <div className="flex flex-col">
+                                <span>Browser Notifications</span>
+                                {window.self !== window.top && permission === 'default' && (
+                                  <span className="text-[10px] text-purple-500 font-normal">Open in new tab to enable</span>
+                                )}
+                                {permission === 'denied' && (
+                                  <span className="text-[10px] text-red-500 font-normal">Blocked by browser</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className={`w-8 h-4 rounded-full transition-colors relative ${permission === 'granted' ? 'bg-blue-500' : 'bg-gray-300'}`}>
+                              <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${permission === 'granted' ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+                            </div>
+                          </button>
                           <div className="h-px bg-gray-100 my-1" />
                           <button 
                             onClick={handleLogout}
@@ -260,7 +298,7 @@ export default function Profile() {
                         </motion.div>
                       )}
                     </AnimatePresence>
-                  </button>
+                  </div>
                 </>
               ) : (
                 <div className="flex gap-2 justify-center">
@@ -439,8 +477,11 @@ function EditProfileModal({ profile, onClose, onUpdate }: any) {
   const [bio, setBio] = useState(profile.bio || '');
   const [photoURL, setPhotoURL] = useState(profile.photoURL || '');
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const { startUpload, attachCallback, tasks } = useUpload();
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const currentTask = tasks.find(t => t.id === activeTaskId);
+  const uploadProgress = currentTask?.progress ?? 0;
+  const uploading = currentTask?.status === 'uploading';
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -454,34 +495,17 @@ function EditProfileModal({ profile, onClose, onUpdate }: any) {
     }
     
     setError(null);
-    setUploading(true);
-    setUploadProgress(0);
-    const storageRef = ref(storage, `profiles/${auth.currentUser.uid}/${Date.now()}_${file.name}`);
-    const uploadTask = uploadBytesResumable(storageRef, file);
-
-    uploadTask.on('state_changed', 
-      (snapshot) => {
-        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        setUploadProgress(progress);
-      },
-      (error) => {
-        console.error("Upload error:", error);
-        setError("Upload failed. Please try again.");
-        setUploading(false);
-      },
-      async () => {
-        try {
-          const downloadURL = await withTimeout(getDownloadURL(uploadTask.snapshot.ref), 30000);
-          setPhotoURL(downloadURL);
-          setUploading(false);
-          setUploadProgress(0);
-        } catch (err) {
-          console.error("Error getting profile download URL:", err);
-          setError("Failed to finalize upload. Please try again.");
-          setUploading(false);
-        }
+    const taskId = startUpload(file, `profiles/${auth.currentUser.uid}`);
+    setActiveTaskId(taskId);
+    
+    attachCallback(taskId, async (url) => {
+      setPhotoURL(url);
+      if (auth.currentUser) {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          photoURL: url
+        });
       }
-    );
+    });
   };
 
   const onDragOver = (e: React.DragEvent) => {

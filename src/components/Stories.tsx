@@ -34,6 +34,9 @@ export default function Stories() {
       const storiesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Story[];
       setStories(storiesData);
       setLoading(false);
+    }, (error) => {
+      console.error('Stories Listener Error:', error);
+      setLoading(false);
     });
 
     return unsubscribe;

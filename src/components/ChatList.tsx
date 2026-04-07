@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { db, collection, query, where, onSnapshot, auth, orderBy, doc, getDoc } from '../lib/firebase';
+import { db, collection, query, where, onSnapshot, auth, orderBy, doc, getDoc, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Search, Edit, Circle } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -92,6 +92,11 @@ function ChatItem({ chat }: { chat: Chat }) {
     const unsubscribe = onSnapshot(doc(db, 'users', otherUserId), (docSnap) => {
       if (docSnap.exists()) {
         setOtherUser({ uid: docSnap.id, ...docSnap.data() } as UserProfile);
+      }
+    }, (error) => {
+      console.error('ChatItem User Listener Error:', error);
+      if (error.message.toLowerCase().includes('permission')) {
+        handleFirestoreError(error, OperationType.GET, `users/${otherUserId}`);
       }
     });
 

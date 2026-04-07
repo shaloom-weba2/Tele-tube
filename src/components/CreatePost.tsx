@@ -175,11 +175,18 @@ export default function CreatePost({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const handleVideoGenerated = (url: string) => {
+  const handleVideoGenerated = (blob: Blob, url: string) => {
     setMediaUrl(url);
-    setUploadedUrl(url); // AI generated video is already a remote URL
     setType('reel');
     setShowGenerator(false);
+    
+    // Upload the generated video blob
+    const user = auth.currentUser;
+    if (user) {
+      const file = new File([blob], `veo_video_${Date.now()}.mp4`, { type: 'video/mp4' });
+      const taskId = startUpload(file, `uploads/${user.uid}`);
+      setActiveTaskId(taskId);
+    }
   };
 
   return (

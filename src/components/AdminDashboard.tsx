@@ -27,10 +27,15 @@ export default function AdminDashboard() {
   useEffect(() => {
     const unsubscribeUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
       setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (error) => {
+      console.error('AdminDashboard Users Listener Error:', error);
     });
 
     const unsubscribePosts = onSnapshot(collection(db, 'posts'), (snapshot) => {
       setPosts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLoading(false);
+    }, (error) => {
+      console.error('AdminDashboard Posts Listener Error:', error);
       setLoading(false);
     });
 

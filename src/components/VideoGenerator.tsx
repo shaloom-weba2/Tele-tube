@@ -4,7 +4,7 @@ import { Wand2, Loader2, Play, Check, AlertCircle, Key } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface VideoGeneratorProps {
-  onVideoGenerated: (url: string) => void;
+  onVideoGenerated: (blob: Blob, previewUrl: string) => void;
 }
 
 declare global {
@@ -102,7 +102,7 @@ export default function VideoGenerator({ onVideoGenerated }: VideoGeneratorProps
       const blob = await response.blob();
       const videoUrl = URL.createObjectURL(blob);
       
-      onVideoGenerated(videoUrl);
+      onVideoGenerated(blob, videoUrl);
       setStatus('Success!');
     } catch (err: any) {
       console.error('Video generation error:', err);

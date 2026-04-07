@@ -1,9 +1,11 @@
 import React, { useState, useRef } from 'react';
-import { X, Image as ImageIcon, Send, Upload, Loader2 } from 'lucide-react';
+import { X, Image as ImageIcon, Send, Upload, Loader2, Wand2 } from 'lucide-react';
 import { auth, db, collection, addDoc, serverTimestamp, storage, ref, uploadBytesResumable, getDownloadURL } from '../lib/firebase';
 import { useUpload } from '../context/UploadContext';
 import { motion, AnimatePresence } from 'motion/react';
 import imageCompression from 'browser-image-compression';
+
+import VideoGenerator from './VideoGenerator';
 
 export default function CreateStory({ onClose }: { onClose: () => void }) {
   const [mediaUrl, setMediaUrl] = useState('');
@@ -13,6 +15,7 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showGenerator, setShowGenerator] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { startUpload, attachCallback, tasks } = useUpload();
@@ -65,8 +68,23 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
     }
 
     setStatus('Uploading to cloud...');
+    const localUrl = URL.createObjectURL(file);
+    setMediaUrl(localUrl);
     const taskId = startUpload(file, `stories/${user.uid}`);
     setActiveTaskId(taskId);
+  };
+
+  const handleVideoGenerated = (blob: Blob, url: string) => {
+    setMediaUrl(url);
+    setMediaType('video');
+    setShowGenerator(false);
+    
+    const user = auth.currentUser;
+    if (user) {
+      const file = new File([blob], `veo_story_${Date.now()}.mp4`, { type: 'video/mp4' });
+      const taskId = startUpload(file, `stories/${user.uid}`);
+      setActiveTaskId(taskId);
+    }
   };
 
   const onDragOver = (e: React.DragEvent) => {
@@ -153,15 +171,26 @@ export default function CreateStory({ onClose }: { onClose: () => void }) {
             <X className="w-6 h-6 text-gray-600" />
           </button>
           <h2 className="text-lg font-bold">Add to Story</h2>
-          <div className="w-8" /> {/* Spacer */}
+          <button 
+            onClick={() => setShowGenerator(!showGenerator)}
+            className={`p-2 rounded-xl transition-all ${showGenerator ? 'bg-purple-100 text-purple-600' : 'hover:bg-gray-100 text-gray-600'}`}
+            title="AI Video Generator"
+          >
+            <Wand2 className="w-5 h-5" />
+          </button>
         </div>
 
         <div 
-          className="p-6 relative"
+          className="p-6 relative max-h-[80vh] overflow-y-auto"
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
           onDrop={onDrop}
         >
+          {showGenerator && (
+            <div className="mb-6 pb-6 border-b">
+              <VideoGenerator onVideoGenerated={handleVideoGenerated} />
+            </div>
+          )}
           <AnimatePresence>
             {isDragging && (
               <motion.div

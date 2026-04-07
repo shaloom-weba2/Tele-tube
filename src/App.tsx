@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { auth, onAuthStateChanged, db, collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc, collectionGroup, limit, orderBy } from './lib/firebase';
+import { auth, onAuthStateChanged, db, collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc, collectionGroup, limit, orderBy, handleFirestoreError, OperationType } from './lib/firebase';
 import Auth from './components/Auth';
 import Feed from './components/Feed';
 import Profile from './components/Profile';
@@ -16,6 +16,7 @@ import { Home, Search, PlusSquare, Play, MessageCircle, User, LogOut, Bell, Shie
 import { motion, AnimatePresence } from 'motion/react';
 
 import { useNotificationSound } from './hooks/useNotificationSound';
+import { useBrowserNotifications } from './hooks/useBrowserNotifications';
 
 function GlobalCallListener({ user }: { user: any }) {
   const [activeCall, setActiveCall] = useState<any>(null);
@@ -53,6 +54,9 @@ function GlobalCallListener({ user }: { user: any }) {
       }
     }, (error) => {
       console.error('GlobalCallListener Error:', error);
+      if (error.message.toLowerCase().includes('permission')) {
+        handleFirestoreError(error, OperationType.LIST, 'collectionGroup/calls');
+      }
     });
 
     return () => {
@@ -258,7 +262,14 @@ export default function App() {
   }, [user]);
 
   const { playMessageSound } = useNotificationSound();
+  const { permission, requestPermission, showNotification } = useBrowserNotifications();
   const location = useLocation();
+
+  useEffect(() => {
+    if (user && permission === 'default') {
+      requestPermission();
+    }
+  }, [user, permission, requestPermission]);
 
   useEffect(() => {
     if (!user) return;
@@ -270,6 +281,34 @@ export default function App() {
     );
     const unsubscribeNotifications = onSnapshot(notificationsQuery, (snapshot) => {
       setUnreadNotifications(snapshot.size);
+      
+      snapshot.docChanges().forEach(change => {
+        if (change.type === 'added') {
+          const data = change.doc.data();
+          // Only notify for new ones (not initial load)
+          if (!snapshot.metadata.fromCache && snapshot.metadata.hasPendingWrites === false) {
+            let title = 'New Notification';
+            let body = 'You have a new notification';
+            
+            if (data.type === 'like') {
+              title = 'New Like';
+              body = `${data.fromName} liked your post`;
+            } else if (data.type === 'comment') {
+              title = 'New Comment';
+              body = `${data.fromName} commented on your post`;
+            } else if (data.type === 'follow') {
+              title = 'New Follower';
+              body = `${data.fromName} started following you`;
+            } else if (data.type === 'admin_broadcast') {
+              title = data.title || 'System Update';
+              body = data.message;
+            }
+
+            showNotification(title, { body, icon: data.fromPhoto });
+            playMessageSound();
+          }
+        }
+      });
     }, (error) => {
       console.error('App: Notifications listener error:', error);
     });
@@ -283,29 +322,25 @@ export default function App() {
     const unsubscribeChats = onSnapshot(chatsQuery, (snapshot) => {
       let totalUnread = 0;
       let shouldPlaySound = false;
+      let notificationData: any = null;
 
       snapshot.docChanges().forEach(change => {
         if (change.type === 'modified') {
           const data = change.doc.data();
           const chatId = change.doc.id;
-          
-          // Find the previous version of this doc in the current snapshot
-          // Actually, docChanges gives us the new data. 
-          // We need to know if unread count for the current user increased.
           const currentUnread = data.unreadCount?.[user.uid] || 0;
-          
-          // We can't easily get the "previous" unread count from the snapshot alone
-          // without storing it in a ref.
           const prevUnread = lastUnreadCounts.current[chatId] || 0;
           
           if (currentUnread > prevUnread) {
-            // Only play if not in THIS specific chat room
             if (location.pathname !== `/messages/${chatId}`) {
               shouldPlaySound = true;
+              notificationData = {
+                title: 'New Message',
+                body: data.lastMessage || 'You received a new message',
+                chatId
+              };
             }
           }
-          
-          // Update ref
           lastUnreadCounts.current[chatId] = currentUnread;
         } else if (change.type === 'added') {
           const data = change.doc.data();
@@ -322,6 +357,9 @@ export default function App() {
 
       if (shouldPlaySound) {
         playMessageSound();
+        if (notificationData) {
+          showNotification(notificationData.title, { body: notificationData.body });
+        }
       }
 
       setUnreadMessages(totalUnread);
@@ -333,7 +371,7 @@ export default function App() {
       unsubscribeNotifications();
       unsubscribeChats();
     };
-  }, [user, location.pathname]);
+  }, [user, location.pathname, playMessageSound, showNotification]);
 
   if (!isAuthReady) {
     return (

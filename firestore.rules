@@ -12,7 +12,9 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && (
         request.auth.token.email == "shaloomoficial250@gmail.com" ||
-        request.auth.token.email == "shaloomoficial2@gmail.com"
+        request.auth.token.email == "shaloomoficial2@gmail.com" ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );
     }
 
@@ -64,19 +66,19 @@ service cloud.firestore {
       }
 
       match /calls/{callId} {
-        allow read: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants || isAdmin());
-        allow create: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants || isAdmin());
-        allow update: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants || isAdmin());
-        allow delete: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants || isAdmin());
+        allow read: if isAuthenticated() && (isAdmin() || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants);
+        allow create: if isAuthenticated() && (isAdmin() || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants);
+        allow update: if isAuthenticated() && (isAdmin() || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants);
+        allow delete: if isAuthenticated() && (isAdmin() || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants);
       }
     }
 
     // Support for collectionGroup('calls')
     match /{path=**}/calls/{callId} {
       allow read: if isAuthenticated() && (
+        isAdmin() ||
         resource.data.receiverId == request.auth.uid || 
-        resource.data.callerId == request.auth.uid ||
-        isAdmin()
+        resource.data.callerId == request.auth.uid
       );
     }
 
