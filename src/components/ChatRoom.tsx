@@ -88,13 +88,23 @@ const VoiceMessage = ({ url, duration, isMe }: { url: string; duration?: number;
 
   const totalDuration = duration || (audioRef.current?.duration && isFinite(audioRef.current.duration) ? audioRef.current.duration : 0);
 
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current || !totalDuration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percentage = x / rect.width;
+    const newTime = percentage * totalDuration;
+    audioRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
+  };
+
   return (
-    <div className="flex items-center gap-3 min-w-[200px]">
+    <div className="flex items-center gap-3 min-w-[220px]">
       <audio ref={audioRef} src={url} preload="metadata" />
       <button 
         type="button"
         onClick={togglePlay}
-        className={`p-2 rounded-full transition-all ${isMe ? 'bg-white/20 hover:bg-white/30' : 'bg-purple-100 hover:bg-purple-200'}`}
+        className={`p-2.5 rounded-full transition-all shadow-sm ${isMe ? 'bg-white/20 hover:bg-white/30' : 'bg-purple-100 hover:bg-purple-200'}`}
       >
         {isPlaying ? (
           <Pause className={`w-4 h-4 ${isMe ? 'text-white' : 'text-purple-600'}`} />
@@ -102,18 +112,21 @@ const VoiceMessage = ({ url, duration, isMe }: { url: string; duration?: number;
           <Play className={`w-4 h-4 ${isMe ? 'text-white' : 'text-purple-600'}`} />
         )}
       </button>
-      <div className="flex-1 flex flex-col gap-1">
-        <div className="h-1 bg-gray-200 rounded-full overflow-hidden">
+      <div className="flex-1 flex flex-col gap-1.5">
+        <div 
+          className="h-1.5 bg-black/10 rounded-full overflow-hidden cursor-pointer relative"
+          onClick={handleSeek}
+        >
           <div 
             className={`h-full transition-all duration-100 ${isMe ? 'bg-white' : 'bg-purple-600'}`} 
             style={{ width: `${(currentTime / (totalDuration || 1)) * 100}%` }} 
           />
         </div>
         <div className="flex justify-between items-center">
-          <span className={`text-[9px] ${isMe ? 'text-white/70' : 'text-gray-500'}`}>
+          <span className={`text-[10px] font-medium ${isMe ? 'text-white/80' : 'text-gray-500'}`}>
             {formatTime(currentTime)}
           </span>
-          <span className={`text-[9px] ${isMe ? 'text-white/70' : 'text-gray-500'}`}>
+          <span className={`text-[10px] font-medium ${isMe ? 'text-white/80' : 'text-gray-500'}`}>
             {formatTime(totalDuration)}
           </span>
         </div>
@@ -184,6 +197,7 @@ export default function ChatRoom() {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const signalingUnsubscribesRef = useRef<(() => void)[]>([]);
 
   const peerConnectionConfig = {
@@ -370,14 +384,20 @@ export default function ChatRoom() {
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.play().catch(err => console.warn('Local video play failed:', err));
     }
   }, [localStream]);
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
+    if (remoteVideoRef.current && remoteStream && activeCall?.type === 'video') {
       remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.play().catch(err => console.warn('Remote video play failed:', err));
     }
-  }, [remoteStream]);
+    if (remoteAudioRef.current && remoteStream && activeCall?.type === 'voice') {
+      remoteAudioRef.current.srcObject = remoteStream;
+      remoteAudioRef.current.play().catch(err => console.warn('Remote audio play failed:', err));
+    }
+  }, [remoteStream, activeCall]);
 
   useEffect(() => {
     let callTimeout: NodeJS.Timeout;
@@ -626,7 +646,8 @@ export default function ChatRoom() {
 
     const isImage = file.type.startsWith('image/');
     const isVideo = file.type.startsWith('video/');
-    const type = isImage ? 'image' : isVideo ? 'video' : 'file';
+    const isAudio = file.type.startsWith('audio/');
+    const type = isImage ? 'image' : isVideo ? 'video' : isAudio ? 'audio' : 'file';
     
     setIsUploading(true);
     setUploadProgress(0);
@@ -730,41 +751,38 @@ export default function ChatRoom() {
   const sendVoiceNote = async () => {
     if (!recordedAudio || !chatId) return;
 
-    setIsUploading(true);
-    setUploadProgress(0);
+    // Capture values before clearing state
+    const { blob, duration } = recordedAudio;
+    const currentChatId = chatId;
+    
+    // Clear preview immediately for "instant" feel
+    setRecordedAudio(null);
     
     try {
-      const mimeType = recordedAudio.blob.type;
+      const mimeType = blob.type;
       const extension = mimeType.split('/')[1].split(';')[0] || 'webm';
-      const storageRef = ref(storage, `chats/${chatId}/voice_${Date.now()}.${extension}`);
-      const uploadTask = uploadBytesResumable(storageRef, recordedAudio.blob);
+      const storageRef = ref(storage, `chats/${currentChatId}/voice_${Date.now()}.${extension}`);
+      const uploadTask = uploadBytesResumable(storageRef, blob);
 
       uploadTask.on('state_changed', 
-        (snapshot) => {
-          setUploadProgress((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-        },
+        null, // No loading progress as requested
         (err) => {
           console.error('Voice upload error:', err);
-          setIsUploading(false);
-          alert('Failed to upload voice note. Please try again.');
+          setError('Failed to upload voice note. Please try again.');
         }, 
         async () => {
           try {
-            const url = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
-            await handleSend(undefined, { type: 'audio', url, duration: recordedAudio.duration });
-            setRecordedAudio(null);
+            const url = await getDownloadURL(uploadTask.snapshot.ref);
+            await handleSend(undefined, { type: 'audio', url, duration });
           } catch (error) {
             console.error('Error sending audio message:', error);
-            alert('Failed to send voice note. Please try again.');
-          } finally {
-            setIsUploading(false);
-            setUploadProgress(0);
+            setError('Failed to send voice note.');
           }
         }
       );
     } catch (error) {
       console.error('Error starting voice upload:', error);
-      setIsUploading(false);
+      setError('Failed to start voice upload.');
     }
   };
 
@@ -1150,22 +1168,31 @@ export default function ChatRoom() {
 
             <div className="flex-1 relative flex items-center">
               {isRecording ? (
-                <div className="flex-1 bg-red-50 text-red-600 rounded-2xl px-4 py-2.5 flex items-center justify-between animate-pulse">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-red-600 rounded-full" />
-                    <span className="text-sm font-medium">Recording {recordingDuration}s</span>
+                <div className="flex-1 bg-red-50 text-red-600 rounded-2xl px-4 py-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1">
+                      {[1, 2, 3, 4].map((i) => (
+                        <motion.div
+                          key={i}
+                          animate={{ height: [8, 16, 8] }}
+                          transition={{ repeat: Infinity, duration: 0.5, delay: i * 0.1 }}
+                          className="w-1 bg-red-500 rounded-full"
+                        />
+                      ))}
+                    </div>
+                    <span className="text-sm font-bold tabular-nums">Recording {recordingDuration}s</span>
                   </div>
-                  <button type="button" onClick={stopRecording} className="p-1 hover:bg-red-100 rounded-full">
+                  <button type="button" onClick={stopRecording} className="p-1.5 hover:bg-red-100 rounded-full transition-colors">
                     <Square className="w-4 h-4 fill-current" />
                   </button>
                 </div>
               ) : recordedAudio ? (
-                <div className="flex-1 bg-purple-50 rounded-2xl px-4 py-2 flex items-center gap-3">
+                <div className="flex-1 bg-purple-50 rounded-2xl px-4 py-2 flex items-center gap-3 border border-purple-100">
                   <VoiceMessage url={recordedAudio.url} duration={recordedAudio.duration} isMe={false} />
                   <button 
                     type="button" 
                     onClick={discardVoiceNote}
-                    className="p-1.5 hover:bg-purple-100 rounded-full text-purple-600"
+                    className="p-1.5 hover:bg-purple-100 rounded-full text-purple-600 transition-colors"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -1224,6 +1251,11 @@ export default function ChatRoom() {
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] bg-gray-900 flex flex-col items-center justify-center p-8 text-white"
           >
+            {/* Hidden Audio for Voice Calls */}
+            {activeCall.type === 'voice' && remoteStream && (
+              <audio ref={remoteAudioRef} autoPlay playsInline />
+            )}
+
             {/* Video Streams */}
             {activeCall.type === 'video' && (
               <div className="absolute inset-0 z-0 flex items-center justify-center bg-black">
