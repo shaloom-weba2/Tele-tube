@@ -10,11 +10,13 @@ import { useUpload } from '../context/UploadContext';
 import { 
   ChevronLeft, Info, Send, Smile, Image as ImageIcon, Check, CheckCheck, 
   Phone, Video, Mic, Paperclip, X, Play, Pause, Square, MoreVertical, 
-  Download, Maximize2, Volume2, VolumeX, MicOff, VideoOff, PhoneOff, MessageCircle
+  Download, Maximize2, Volume2, VolumeX, MicOff, VideoOff, PhoneOff, MessageCircle, Users
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNotificationSound } from '../hooks/useNotificationSound';
+
+import { UserInfoModal, GroupInfoModal } from './ChatModals';
 
 interface Message {
   id: string;
@@ -147,6 +149,10 @@ export default function ChatRoom() {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOtherUserTyping, setIsOtherUserTyping] = useState(false);
+  const [isGroup, setIsGroup] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [showUserInfo, setShowUserInfo] = useState(false);
+  const [showGroupInfo, setShowGroupInfo] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const { startUpload, attachCallback, tasks } = useUpload();
@@ -194,6 +200,7 @@ export default function ChatRoom() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingDurationRef = useRef<number>(0);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -211,14 +218,19 @@ export default function ChatRoom() {
   useEffect(() => {
     if (!chatId || !auth.currentUser) return;
 
-    // Fetch other user profile
-    const fetchOtherUser = async () => {
+    // Fetch chat details
+    const fetchChatDetails = async () => {
       try {
         const chatSnap = await getDoc(doc(db, 'chats', chatId));
         if (chatSnap.exists()) {
-          const participants = chatSnap.data().participants;
+          const data = chatSnap.data();
+          setIsGroup(!!data.isGroup);
+          setGroupName(data.groupName || '');
+          
+          const participants = data.participants || [];
           const otherId = participants.find((p: string) => p !== auth.currentUser?.uid);
-          if (otherId) {
+          
+          if (!data.isGroup && otherId) {
             onSnapshot(doc(db, 'users', otherId), (docSnap) => {
               if (docSnap.exists()) {
                 setOtherUser({ uid: docSnap.id, ...docSnap.data() } as UserProfile);
@@ -230,12 +242,10 @@ export default function ChatRoom() {
           }
         }
       } catch (error) {
-        console.error('ChatRoom: Error fetching chat or other user:', error);
-        // If we don't have access, we should probably redirect or show an error
-        // navigate('/messages');
+        console.error('ChatRoom: Error fetching chat details:', error);
       }
     };
-    fetchOtherUser();
+    fetchChatDetails();
     
     // Listen for typing status
     let prevTypingStatus = false;
@@ -588,17 +598,18 @@ export default function ChatRoom() {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSend = async (e?: React.FormEvent, mediaData?: { type: 'image' | 'video' | 'audio' | 'file', url: string, duration?: number, fileName?: string, fileSize?: number }) => {
+  const handleSend = async (e?: React.FormEvent, mediaData?: { type: 'image' | 'video' | 'audio' | 'file', url: string, duration?: number, fileName?: string, fileSize?: number }, targetChatId?: string) => {
     if (e) e.preventDefault();
-    if (!chatId || (!newMessage.trim() && !mediaData)) return;
+    const activeChatId = targetChatId || chatId;
+    if (!activeChatId || (!newMessage.trim() && !mediaData)) return;
 
     const text = newMessage;
-    setNewMessage('');
+    if (!mediaData) setNewMessage('');
     updateTypingStatus(false);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
     try {
-      const chatRef = doc(db, 'chats', chatId);
+      const chatRef = doc(db, 'chats', activeChatId);
       const chatSnap = await withTimeout(getDoc(chatRef));
       const chatData = chatSnap.data();
       const participants = chatData?.participants || [];
@@ -620,7 +631,7 @@ export default function ChatRoom() {
         messageData.text = text;
       }
 
-      await withTimeout(addDoc(collection(db, 'chats', chatId, 'messages'), messageData));
+      await withTimeout(addDoc(collection(db, 'chats', activeChatId, 'messages'), messageData));
 
       const lastMsgText = mediaData 
         ? (mediaData.type === 'image' ? '📷 Image' : mediaData.type === 'video' ? '🎥 Video' : mediaData.type === 'audio' ? '🎵 Voice Note' : `📁 ${mediaData.fileName || 'File'}`)
@@ -640,13 +651,14 @@ export default function ChatRoom() {
       await withTimeout(updateDoc(chatRef, unreadUpdates));
     } catch (error) {
       console.error('Error sending message:', error);
-      alert('Failed to send message. Please try again.');
-      handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}`);
+      setError('Failed to send message. Please try again.');
+      handleFirestoreError(error, OperationType.WRITE, `chats/${activeChatId}`);
     }
   };
 
   const handleFileUpload = async (file: File) => {
     if (!file || !chatId) return;
+    const currentChatId = chatId;
     setError(null);
 
     // Validation: File size limit (e.g., 50MB for chat)
@@ -667,7 +679,7 @@ export default function ChatRoom() {
     const user = auth.currentUser;
     if (!user) return;
 
-    const taskId = startUpload(file, `chats/${chatId}/${user.uid}`);
+    const taskId = startUpload(file, `chats/${currentChatId}/${user.uid}`);
     setActiveTaskId(taskId);
 
     attachCallback(taskId, async (url) => {
@@ -680,7 +692,7 @@ export default function ChatRoom() {
           url: url,
           fileName: file.name,
           fileSize: file.size
-        });
+        }, currentChatId);
       } catch (error) {
         console.error('Error sending message after background upload:', error);
         setError('File uploaded but failed to send message.');
@@ -727,14 +739,24 @@ export default function ChatRoom() {
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        if (e.data.size > 0) {
+          console.log('Audio chunk received:', e.data.size);
+          audioChunksRef.current.push(e.data);
+        }
       };
 
       mediaRecorder.onstop = async () => {
+        if (audioChunksRef.current.length === 0) {
+          console.error('No audio chunks captured');
+          setError('Failed to capture audio. Please try again.');
+          return;
+        }
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        const duration = recordingDuration;
+        const duration = recordingDurationRef.current;
         
-        if (audioBlob.size < 1000) {
+        console.log('Recording stopped. Blob size:', audioBlob.size, 'Duration:', duration);
+        
+        if (audioBlob.size < 100) {
           console.log('Recording too short, discarding.');
           return;
         }
@@ -744,11 +766,13 @@ export default function ChatRoom() {
         stream.getTracks().forEach(track => track.stop());
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(1000); // Capture in 1s chunks for better reliability
       setIsRecording(true);
       setRecordingDuration(0);
+      recordingDurationRef.current = 0;
       timerRef.current = setInterval(() => {
         setRecordingDuration(prev => prev + 1);
+        recordingDurationRef.current += 1;
       }, 1000);
     } catch (err: any) {
       console.error('Error starting recording:', err);
@@ -774,27 +798,23 @@ export default function ChatRoom() {
       const mimeType = blob.type;
       const extension = mimeType.split('/')[1].split(';')[0] || 'webm';
       const storageRef = ref(storage, `chats/${currentChatId}/voice_${Date.now()}.${extension}`);
+      
+      console.log('Uploading voice note...', { size: blob.size, type: mimeType });
+      
       const uploadTask = uploadBytesResumable(storageRef, blob);
-
-      uploadTask.on('state_changed', 
-        null, // No loading progress as requested
-        (err) => {
-          console.error('Voice upload error:', err);
-          setError('Failed to upload voice note. Please try again.');
-        }, 
-        async () => {
-          try {
-            const url = await getDownloadURL(uploadTask.snapshot.ref);
-            await handleSend(undefined, { type: 'audio', url, duration });
-          } catch (error) {
-            console.error('Error sending audio message:', error);
-            setError('Failed to send voice note.');
-          }
-        }
-      );
-    } catch (error) {
-      console.error('Error starting voice upload:', error);
-      setError('Failed to start voice upload.');
+      
+      // Await the upload task completion
+      const snapshot = await uploadTask;
+      const url = await getDownloadURL(snapshot.ref);
+      
+      console.log('Voice note uploaded, sending message...', { url });
+      
+      await handleSend(undefined, { type: 'audio', url, duration }, currentChatId);
+      
+      console.log('Voice note sent successfully');
+    } catch (error: any) {
+      console.error('Error sending voice note:', error);
+      setError(`Failed to send voice note: ${error.message || 'Unknown error'}`);
     }
   };
 
@@ -905,7 +925,11 @@ export default function ChatRoom() {
           
           <div className="flex items-center gap-3">
             <div className="relative">
-              {otherUser?.photoURL ? (
+              {isGroup ? (
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white shadow-sm">
+                  <Users className="w-6 h-6" />
+                </div>
+              ) : otherUser?.photoURL ? (
                 <img
                   src={otherUser.photoURL}
                   alt={otherUser.displayName}
@@ -917,16 +941,18 @@ export default function ChatRoom() {
                   {otherUser?.displayName?.charAt(0) || '?'}
                 </div>
               )}
-              {otherUser?.isOnline && (
+              {!isGroup && otherUser?.isOnline && (
                 <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full shadow-sm" />
               )}
             </div>
             <div className="flex flex-col">
               <h2 className="font-bold text-gray-900 leading-tight truncate max-w-[150px] sm:max-w-[200px]">
-                {otherUser?.displayName || 'Loading...'}
+                {isGroup ? groupName : (otherUser?.displayName || 'Loading...')}
               </h2>
               <p className="text-[10px] text-gray-500 flex items-center gap-1">
-                {otherUser?.isOnline ? (
+                {isGroup ? (
+                  'Group Chat'
+                ) : otherUser?.isOnline ? (
                   <span className="text-green-500 font-medium animate-pulse">Online</span>
                 ) : otherUser?.lastSeen ? (
                   `Last seen ${formatDistanceToNow(otherUser.lastSeen.toDate(), { addSuffix: true })}`
@@ -958,11 +984,22 @@ export default function ChatRoom() {
           >
             <Video className="w-5 h-5" />
           </button>
-          <button className="p-2.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors">
+          <button 
+            onClick={() => isGroup ? setShowGroupInfo(true) : setShowUserInfo(true)}
+            className="p-2.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"
+          >
             <Info className="w-5 h-5" />
           </button>
         </div>
       </header>
+
+      {showUserInfo && otherUser && (
+        <UserInfoModal user={otherUser} onClose={() => setShowUserInfo(false)} />
+      )}
+
+      {showGroupInfo && chatId && (
+        <GroupInfoModal chatId={chatId} onClose={() => setShowGroupInfo(false)} />
+      )}
 
       {/* Messages Area */}
       <div 

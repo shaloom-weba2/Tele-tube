@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { db, collection, query, where, onSnapshot, auth, orderBy, doc, getDoc, handleFirestoreError, OperationType } from '../lib/firebase';
-import { Search, Edit, Circle } from 'lucide-react';
+import { Search, Edit, Circle, Users } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { CreateGroupModal } from './ChatModals';
 
 interface Chat {
   id: string;
@@ -10,6 +11,8 @@ interface Chat {
   lastMessage: string;
   lastMessageAt: any;
   unreadCount?: { [uid: string]: number };
+  isGroup?: boolean;
+  groupName?: string;
 }
 
 interface UserProfile {
@@ -23,6 +26,7 @@ interface UserProfile {
 export default function ChatList() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -49,9 +53,18 @@ export default function ChatList() {
     <div className="max-w-2xl mx-auto h-screen flex flex-col bg-white border-x border-gray-200">
       <div className="p-6 border-b flex items-center justify-between">
         <h1 className="text-2xl font-bold">Messages</h1>
-        <button className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-          <Edit className="w-6 h-6" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => setShowCreateGroup(true)}
+            className="p-2 hover:bg-purple-100 text-purple-600 rounded-full transition-colors flex items-center gap-2"
+            title="Create Group"
+          >
+            <Users className="w-6 h-6" />
+          </button>
+          <button className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+            <Edit className="w-6 h-6" />
+          </button>
+        </div>
       </div>
 
       <div className="p-4">
@@ -60,7 +73,7 @@ export default function ChatList() {
           <input
             type="text"
             placeholder="Search messages"
-            className="w-full pl-10 pr-4 py-2 bg-gray-100 rounded-xl border-none focus:ring-2 focus:ring-blue-500 transition-all"
+            className="w-full pl-10 pr-4 py-2 bg-gray-100 rounded-xl border-none focus:ring-2 focus:ring-purple-500 transition-all"
           />
         </div>
       </div>
@@ -76,6 +89,8 @@ export default function ChatList() {
           ))
         )}
       </div>
+
+      {showCreateGroup && <CreateGroupModal onClose={() => setShowCreateGroup(false)} />}
     </div>
   );
 }
@@ -87,7 +102,7 @@ function ChatItem({ chat }: { chat: Chat }) {
   const unread = chat.unreadCount?.[currentUserId || ''] || 0;
 
   useEffect(() => {
-    if (!otherUserId) return;
+    if (!otherUserId || chat.isGroup) return;
 
     const unsubscribe = onSnapshot(doc(db, 'users', otherUserId), (docSnap) => {
       if (docSnap.exists()) {
@@ -101,35 +116,39 @@ function ChatItem({ chat }: { chat: Chat }) {
     });
 
     return unsubscribe;
-  }, [otherUserId]);
+  }, [otherUserId, chat.isGroup]);
 
-  if (!otherUser) return null;
+  if (!chat.isGroup && !otherUser) return null;
 
   return (
     <Link
       to={`/messages/${chat.id}`}
-      className={`flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors ${unread > 0 ? 'bg-blue-50/30' : ''}`}
+      className={`flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors ${unread > 0 ? 'bg-purple-50/30' : ''}`}
     >
       <div className="relative">
-        {otherUser.photoURL ? (
+        {chat.isGroup ? (
+          <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white shadow-md">
+            <Users className="w-8 h-8" />
+          </div>
+        ) : otherUser?.photoURL ? (
           <img
             src={otherUser.photoURL}
             alt={otherUser.displayName}
-            className="w-14 h-14 rounded-full object-cover"
+            className="w-14 h-14 rounded-full object-cover shadow-sm"
             referrerPolicy="no-referrer"
           />
         ) : (
           <div className="w-14 h-14 rounded-full bg-gray-200" />
         )}
-        {otherUser.isOnline && (
-          <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 border-2 border-white rounded-full" />
+        {!chat.isGroup && otherUser?.isOnline && (
+          <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 border-2 border-white rounded-full shadow-sm" />
         )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex justify-between items-baseline">
           <div className="flex items-center gap-2">
             <h3 className={`font-semibold truncate ${unread > 0 ? 'text-black' : 'text-gray-900'}`}>
-              {otherUser.displayName}
+              {chat.isGroup ? chat.groupName : otherUser?.displayName}
             </h3>
           </div>
           <span className="text-xs text-gray-400">
@@ -141,13 +160,13 @@ function ChatItem({ chat }: { chat: Chat }) {
             {chat.lastMessage || 'No messages yet'}
           </p>
           <div className="flex items-center gap-2">
-            {!otherUser.isOnline && otherUser.lastSeen && (
+            {!chat.isGroup && otherUser && !otherUser.isOnline && otherUser.lastSeen && (
               <span className="text-[10px] text-gray-400">
                 {formatDistanceToNow(otherUser.lastSeen.toDate(), { addSuffix: true })}
               </span>
             )}
             {unread > 0 && (
-              <span className="bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+              <span className="bg-purple-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
                 {unread}
               </span>
             )}

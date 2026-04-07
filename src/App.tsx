@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { auth, onAuthStateChanged, db, collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc, collectionGroup, limit, orderBy, handleFirestoreError, OperationType } from './lib/firebase';
 import Auth from './components/Auth';
 import Feed from './components/Feed';
@@ -470,6 +470,7 @@ export default function App() {
                     <Route path="/messages" element={<ChatList />} />
                     <Route path="/messages/:chatId" element={<ChatRoom />} />
                     <Route path="/notifications" element={<Notifications />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>
                 </main>
               </div>
