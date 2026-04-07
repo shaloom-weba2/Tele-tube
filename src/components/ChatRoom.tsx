@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
-import { useChatSounds } from '../hooks/useChatSounds';
+import { useNotificationSound } from '../hooks/useNotificationSound';
 
 interface Message {
   id: string;
@@ -86,6 +86,8 @@ const VoiceMessage = ({ url, duration, isMe }: { url: string; duration?: number;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const totalDuration = duration || (audioRef.current?.duration && isFinite(audioRef.current.duration) ? audioRef.current.duration : 0);
+
   return (
     <div className="flex items-center gap-3 min-w-[200px]">
       <audio ref={audioRef} src={url} preload="metadata" />
@@ -104,7 +106,7 @@ const VoiceMessage = ({ url, duration, isMe }: { url: string; duration?: number;
         <div className="h-1 bg-gray-200 rounded-full overflow-hidden">
           <div 
             className={`h-full transition-all duration-100 ${isMe ? 'bg-white' : 'bg-purple-600'}`} 
-            style={{ width: `${(currentTime / (duration || audioRef.current?.duration || 1)) * 100}%` }} 
+            style={{ width: `${(currentTime / (totalDuration || 1)) * 100}%` }} 
           />
         </div>
         <div className="flex justify-between items-center">
@@ -112,7 +114,7 @@ const VoiceMessage = ({ url, duration, isMe }: { url: string; duration?: number;
             {formatTime(currentTime)}
           </span>
           <span className={`text-[9px] ${isMe ? 'text-white/70' : 'text-gray-500'}`}>
-            {formatTime(duration || 0)}
+            {formatTime(totalDuration)}
           </span>
         </div>
       </div>
@@ -152,6 +154,7 @@ export default function ChatRoom() {
     }
   }, [currentTask]);
   const [isRecording, setIsRecording] = useState(false);
+  const [recordedAudio, setRecordedAudio] = useState<{ blob: Blob; url: string; duration: number } | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [activeCall, setActiveCall] = useState<CallSession | null>(null);
   const [isIncomingCall, setIsIncomingCall] = useState(false);
@@ -161,7 +164,14 @@ export default function ChatRoom() {
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   
-  const { soundEnabled, toggleSound, playTypingSound, playNotificationSound } = useChatSounds();
+  const { 
+    soundEnabled, 
+    toggleSound, 
+    playMessageSound, 
+    startCallRinging, 
+    stopCallRinging,
+    playTypingSound 
+  } = useNotificationSound();
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -237,7 +247,7 @@ export default function ChatRoom() {
           change.doc.data().senderId !== auth.currentUser?.uid
         );
         if (hasNewIncoming) {
-          playNotificationSound();
+          playMessageSound();
         }
       }
 
@@ -273,8 +283,13 @@ export default function ChatRoom() {
         const callData = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as CallSession;
         const isCaller = callData.callerId === auth.currentUser?.uid;
         
-        if (!isCaller) {
+        if (!isCaller && callData.status === 'ringing') {
           setIsIncomingCall(true);
+          startCallRinging();
+        }
+        
+        if (callData.status === 'connected' || callData.status === 'ended' || callData.status === 'missed') {
+          stopCallRinging();
         }
         
         setActiveCall(callData);
@@ -333,7 +348,10 @@ export default function ChatRoom() {
       const pc = new RTCPeerConnection(peerConnectionConfig);
       peerConnectionRef.current = pc;
 
-      // Use existing stream if available (should be set by initiateCall or handleCallAction)
+      // Queue for ICE candidates received before remote description is set
+      const iceCandidatesQueue: RTCIceCandidate[] = [];
+
+      // Use existing stream if available
       let stream = localStream;
       
       if (!stream) {
@@ -350,7 +368,9 @@ export default function ChatRoom() {
       // Handle remote stream
       pc.ontrack = (event) => {
         console.log('Received remote track');
-        setRemoteStream(event.streams[0]);
+        if (event.streams && event.streams[0]) {
+          setRemoteStream(event.streams[0]);
+        }
       };
 
       // Handle ICE candidates
@@ -363,8 +383,8 @@ export default function ChatRoom() {
 
       pc.oniceconnectionstatechange = () => {
         console.log('ICE connection state:', pc.iceConnectionState);
-        if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
-          // Don't end call immediately on disconnected, it might reconnect
+        if (pc.iceConnectionState === 'failed') {
+          pc.restartIce();
         }
       };
 
@@ -382,24 +402,38 @@ export default function ChatRoom() {
           if (data?.answer && !pc.currentRemoteDescription) {
             console.log('Received answer');
             const answerDescription = new RTCSessionDescription(data.answer);
-            pc.setRemoteDescription(answerDescription).catch(e => console.error('Error setting remote description (answer):', e));
+            pc.setRemoteDescription(answerDescription).then(() => {
+              // Process queued candidates
+              while (iceCandidatesQueue.length > 0) {
+                const cand = iceCandidatesQueue.shift();
+                if (cand) pc.addIceCandidate(cand);
+              }
+            }).catch(e => console.error('Error setting remote description (answer):', e));
           }
         });
         signalingUnsubscribesRef.current.push(unsubAnswer);
       } else {
         // Listen for offer
-        const callSnap = await getDoc(callRef);
-        const data = callSnap.data();
-        if (data?.offer) {
-          console.log('Received offer');
-          const offerDescription = new RTCSessionDescription(data.offer);
-          await pc.setRemoteDescription(offerDescription);
+        const unsubOffer = onSnapshot(callRef, async (docSnap) => {
+          const data = docSnap.data();
+          if (data?.offer && !pc.currentRemoteDescription) {
+            console.log('Received offer');
+            const offerDescription = new RTCSessionDescription(data.offer);
+            await pc.setRemoteDescription(offerDescription);
+            
+            // Process queued candidates
+            while (iceCandidatesQueue.length > 0) {
+              const cand = iceCandidatesQueue.shift();
+              if (cand) pc.addIceCandidate(cand);
+            }
 
-          // Create answer
-          const answerDescription = await pc.createAnswer();
-          await pc.setLocalDescription(answerDescription);
-          await updateDoc(callRef, { answer: { type: answerDescription.type, sdp: answerDescription.sdp } });
-        }
+            // Create answer
+            const answerDescription = await pc.createAnswer();
+            await pc.setLocalDescription(answerDescription);
+            await updateDoc(callRef, { answer: { type: answerDescription.type, sdp: answerDescription.sdp } });
+          }
+        });
+        signalingUnsubscribesRef.current.push(unsubOffer);
       }
 
       // Listen for remote ICE candidates
@@ -408,7 +442,11 @@ export default function ChatRoom() {
         snapshot.docChanges().forEach((change) => {
           if (change.type === 'added') {
             const candidate = new RTCIceCandidate(change.doc.data());
-            pc.addIceCandidate(candidate).catch(e => console.error('Error adding ICE candidate:', e));
+            if (pc.remoteDescription) {
+              pc.addIceCandidate(candidate).catch(e => console.error('Error adding ICE candidate:', e));
+            } else {
+              iceCandidatesQueue.push(candidate);
+            }
           }
         });
       });
@@ -423,6 +461,7 @@ export default function ChatRoom() {
 
   const endCall = () => {
     console.log('Ending call and cleaning up resources');
+    stopCallRinging();
     
     // Unsubscribe from signaling
     signalingUnsubscribesRef.current.forEach(unsub => unsub());
@@ -611,46 +650,13 @@ export default function ChatRoom() {
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         const duration = recordingDuration;
         
-        if (audioBlob.size < 1000) { // Less than 1KB, likely too short
+        if (audioBlob.size < 1000) {
           console.log('Recording too short, discarding.');
           return;
         }
 
-        setIsUploading(true);
-        setUploadProgress(0);
-        
-        try {
-          const extension = mimeType.split('/')[1].split(';')[0];
-          const storageRef = ref(storage, `chats/${chatId}/voice_${Date.now()}.${extension}`);
-          const uploadTask = uploadBytesResumable(storageRef, audioBlob);
-
-          uploadTask.on('state_changed', 
-            (snapshot) => {
-              setUploadProgress((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-            },
-            (err) => {
-              console.error('Voice upload error:', err);
-              setIsUploading(false);
-              alert('Failed to upload voice note. Please try again.');
-            }, 
-            async () => {
-              try {
-                const url = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
-                await handleSend(undefined, { type: 'audio', url, duration });
-              } catch (error) {
-                console.error('Error sending audio message:', error);
-                alert('Failed to send voice note. Please try again.');
-              } finally {
-                setIsUploading(false);
-                setUploadProgress(0);
-              }
-            }
-          );
-        } catch (error) {
-          console.error('Error starting voice upload:', error);
-          setIsUploading(false);
-        }
-
+        const audioUrl = URL.createObjectURL(audioBlob);
+        setRecordedAudio({ blob: audioBlob, url: audioUrl, duration });
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -670,11 +676,51 @@ export default function ChatRoom() {
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      if (timerRef.current) clearInterval(timerRef.current);
+  const sendVoiceNote = async () => {
+    if (!recordedAudio || !chatId) return;
+
+    setIsUploading(true);
+    setUploadProgress(0);
+    
+    try {
+      const mimeType = recordedAudio.blob.type;
+      const extension = mimeType.split('/')[1].split(';')[0] || 'webm';
+      const storageRef = ref(storage, `chats/${chatId}/voice_${Date.now()}.${extension}`);
+      const uploadTask = uploadBytesResumable(storageRef, recordedAudio.blob);
+
+      uploadTask.on('state_changed', 
+        (snapshot) => {
+          setUploadProgress((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+        },
+        (err) => {
+          console.error('Voice upload error:', err);
+          setIsUploading(false);
+          alert('Failed to upload voice note. Please try again.');
+        }, 
+        async () => {
+          try {
+            const url = await withTimeout(getDownloadURL(uploadTask.snapshot.ref));
+            await handleSend(undefined, { type: 'audio', url, duration: recordedAudio.duration });
+            setRecordedAudio(null);
+          } catch (error) {
+            console.error('Error sending audio message:', error);
+            alert('Failed to send voice note. Please try again.');
+          } finally {
+            setIsUploading(false);
+            setUploadProgress(0);
+          }
+        }
+      );
+    } catch (error) {
+      console.error('Error starting voice upload:', error);
+      setIsUploading(false);
+    }
+  };
+
+  const discardVoiceNote = () => {
+    if (recordedAudio) {
+      URL.revokeObjectURL(recordedAudio.url);
+      setRecordedAudio(null);
     }
   };
 
@@ -720,11 +766,20 @@ export default function ChatRoom() {
     }
   };
 
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+  };
+
   const handleCallAction = async (action: 'accept' | 'decline' | 'end') => {
     if (!activeCall || !chatId) return;
     try {
       const callRef = doc(db, 'chats', chatId, 'calls', activeCall.id);
       if (action === 'accept') {
+        stopCallRinging();
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           alert('Your browser does not support video/audio calling.');
           return;
@@ -749,6 +804,7 @@ export default function ChatRoom() {
           await updateDoc(callRef, { status: 'missed' });
         }
       } else if (action === 'decline' || action === 'end') {
+        stopCallRinging();
         await updateDoc(callRef, { status: action === 'decline' ? 'missed' : 'ended' });
         endCall();
       }
@@ -1016,6 +1072,17 @@ export default function ChatRoom() {
                     <Square className="w-4 h-4 fill-current" />
                   </button>
                 </div>
+              ) : recordedAudio ? (
+                <div className="flex-1 bg-purple-50 rounded-2xl px-4 py-2 flex items-center gap-3">
+                  <VoiceMessage url={recordedAudio.url} duration={recordedAudio.duration} isMe={false} />
+                  <button 
+                    type="button" 
+                    onClick={discardVoiceNote}
+                    className="p-1.5 hover:bg-purple-100 rounded-full text-purple-600"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
               ) : (
                 <input
                   type="text"
@@ -1033,7 +1100,15 @@ export default function ChatRoom() {
             </div>
 
             <div className="flex items-center gap-1">
-              {!newMessage.trim() && !isRecording ? (
+              {recordedAudio ? (
+                <button
+                  type="button"
+                  onClick={sendVoiceNote}
+                  className="p-2.5 bg-purple-600 text-white rounded-full hover:bg-purple-700 transition-all shadow-md shadow-purple-200"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              ) : !newMessage.trim() && !isRecording ? (
                 <button 
                   type="button" 
                   onMouseDown={startRecording}

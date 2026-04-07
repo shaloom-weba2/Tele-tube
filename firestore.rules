@@ -1,25 +1,6 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    // Collection: users
-    // Fields: uid, displayName, email, photoURL, bio, followersCount, followingCount, createdAt
-    //
-    // Collection: posts
-    // Fields: id, authorId, authorName, authorPhoto, content, imageUrl, type, likesCount, commentsCount, createdAt
-    //
-    // Collection: follows
-    // Fields: followerId, followingId, createdAt
-    //
-    // Collection: chats
-    // Fields: id, participants, lastMessage, lastMessageAt
-    // ===============================================================
-
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -28,45 +9,11 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isDocOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.authorId;
-    }
-
-    function isValidEmail(email) {
-      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
-    }
-
     function isAdmin() {
       return isAuthenticated() && (
-        (request.auth.token.email == "shaloomoficial250@gmail.com" && request.auth.token.email_verified == true) ||
-        (request.auth.token.email == "shaloomoficial2@gmail.com" && request.auth.token.email_verified == true) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        request.auth.token.email == "shaloomoficial250@gmail.com" ||
+        request.auth.token.email == "shaloomoficial2@gmail.com"
       );
-    }
-
-    function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'displayName', 'email', 'createdAt']) &&
-             data.uid == request.auth.uid &&
-             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 50 &&
-             isValidEmail(data.email);
-    }
-
-    function isValidPost(data) {
-      return isAuthenticated() && 
-             data.authorId == request.auth.uid &&
-             data.type in ['post', 'reel'];
-    }
-
-    // ===============================================================
-    // Rules
-    // ===============================================================
-
-    // Global calls rule for collectionGroup queries and subcollections
-    match /{path=**}/calls/{callId} {
-      allow read, write: if isAuthenticated();
-      match /{allSubcollections=**} {
-        allow read, write: if isAuthenticated();
-      }
     }
 
     match /users/{userId} {
@@ -74,24 +21,28 @@ service cloud.firestore {
       allow create: if isOwner(userId);
       allow update: if isAuthenticated() && (
         isOwner(userId) || 
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followersCount']) ||
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isOnline', 'lastSeen'])
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followersCount', 'isOnline', 'lastSeen'])
       );
     }
 
     match /posts/{postId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidPost(request.resource.data);
+      allow create: if isAuthenticated();
       allow update: if isAuthenticated() && (
-        isDocOwner() || 
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likesCount', 'commentsCount']))
+        resource.data.authorId == request.auth.uid || 
+        isAdmin() ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likesCount', 'commentsCount'])
       );
-      allow delete: if isDocOwner() || isAdmin();
+      allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isAdmin());
 
       match /comments/{commentId} {
         allow read: if isAuthenticated();
         allow create: if isAuthenticated() && request.resource.data.authorId == request.auth.uid;
-        allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid || isAdmin());
+        allow delete: if isAuthenticated() && (
+          resource.data.authorId == request.auth.uid || 
+          get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid || 
+          isAdmin()
+        );
       }
     }
 
@@ -111,6 +62,22 @@ service cloud.firestore {
         allow create: if isAuthenticated() && request.resource.data.senderId == request.auth.uid;
         allow update: if isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
       }
+
+      match /calls/{callId} {
+        allow read: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants || isAdmin());
+        allow create: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants || isAdmin());
+        allow update: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants || isAdmin());
+        allow delete: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants || isAdmin());
+      }
+    }
+
+    // Support for collectionGroup('calls')
+    match /{path=**}/calls/{callId} {
+      allow read: if isAuthenticated() && (
+        resource.data.receiverId == request.auth.uid || 
+        resource.data.callerId == request.auth.uid ||
+        isAdmin()
+      );
     }
 
     match /stories/{storyId} {
@@ -132,7 +99,7 @@ service cloud.firestore {
       allow delete: if isOwner(userId);
     }
 
-    match /admin_config/{document} {
+    match /admin_config/{configId} {
       allow read, write: if isAdmin();
     }
 

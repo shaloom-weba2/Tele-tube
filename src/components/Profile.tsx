@@ -2,12 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db, doc, getDoc, getDocs, collection, query, where, orderBy, onSnapshot, auth, handleFirestoreError, OperationType, updateDoc, increment, setDoc, deleteDoc, signOut, addDoc, storage, ref, uploadBytesResumable, getDownloadURL, serverTimestamp, updateProfile, withTimeout } from '../lib/firebase';
 import PostCard from './PostCard';
-import { Grid, Play, Bookmark, Settings, UserPlus, UserMinus, X, Camera, LogOut, Heart, MessageSquare } from 'lucide-react';
+import { Grid, Play, Bookmark, Settings, UserPlus, UserMinus, X, Camera, LogOut, Heart, MessageSquare, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useNotificationSound } from '../hooks/useNotificationSound';
 
 export default function Profile() {
   const { userId } = useParams();
   const navigate = useNavigate();
+  const { soundEnabled, toggleSound } = useNotificationSound();
   const [profile, setProfile] = useState<any>(null);
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -233,8 +235,21 @@ export default function Profile() {
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: 10 }}
-                          className="absolute top-full right-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50"
+                          className="absolute top-full right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50"
                         >
+                          <button 
+                            onClick={toggleSound}
+                            className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center justify-between text-sm font-semibold text-gray-700"
+                          >
+                            <div className="flex items-center gap-2">
+                              {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                              Sound Notifications
+                            </div>
+                            <div className={`w-8 h-4 rounded-full transition-colors relative ${soundEnabled ? 'bg-purple-500' : 'bg-gray-300'}`}>
+                              <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${soundEnabled ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+                            </div>
+                          </button>
+                          <div className="h-px bg-gray-100 my-1" />
                           <button 
                             onClick={handleLogout}
                             className="w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 flex items-center gap-2 text-sm font-semibold"

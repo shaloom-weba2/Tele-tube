@@ -126,6 +126,20 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["email", "code", "createdAt"]
+    },
+    "calls": {
+      "title": "Call",
+      "description": "A voice or video call session.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "callerId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "type": { "type": "string", "enum": ["voice", "video"] },
+        "status": { "type": "string", "enum": ["ringing", "connected", "ended", "missed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["callerId", "receiverId", "type", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -135,6 +149,7 @@
     "/follows/{followId}": { "schema": "follows", "description": "Follow relationships." },
     "/chats/{chatId}": { "schema": "chats", "description": "Chat conversations." },
     "/chats/{chatId}/messages/{messageId}": { "schema": "messages", "description": "Messages in chats." },
+    "/chats/{chatId}/calls/{callId}": { "schema": "calls", "description": "Call sessions within a chat." },
     "/stories/{storyId}": { "schema": "stories", "description": "Temporary stories." },
     "/admin_config/{document}": { "schema": "admin_config", "description": "Admin configuration and authentication." },
     "/verification_codes/{codeId}": { "schema": "verification_codes", "description": "Email verification codes." }

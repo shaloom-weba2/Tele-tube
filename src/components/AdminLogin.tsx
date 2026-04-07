@@ -19,12 +19,20 @@ export default function AdminLogin({ onLogin }: AdminLoginProps) {
     setError('');
 
     try {
-      const adminDoc = await getDoc(doc(db, 'admin_config', 'auth'));
-      const adminData = adminDoc.data();
-      
-      // Default credentials if not set
-      const correctIdentifier = adminData?.username || 'admin';
-      const correctPassword = adminData?.password || 'admin123';
+      let correctIdentifier = 'admin';
+      let correctPassword = 'admin123';
+
+      try {
+        const adminDoc = await getDoc(doc(db, 'admin_config', 'auth'));
+        if (adminDoc.exists()) {
+          const adminData = adminDoc.data();
+          correctIdentifier = adminData?.username || correctIdentifier;
+          correctPassword = adminData?.password || correctPassword;
+        }
+      } catch (readError) {
+        console.warn('Admin config read failed, using defaults:', readError);
+        // Fallback to defaults is already set
+      }
 
       if (identifier === correctIdentifier && password === correctPassword) {
         onLogin(password);
@@ -33,7 +41,7 @@ export default function AdminLogin({ onLogin }: AdminLoginProps) {
       }
     } catch (err) {
       console.error('Admin login error:', err);
-      setError('Failed to verify credentials. Please try again.');
+      setError('An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);
     }

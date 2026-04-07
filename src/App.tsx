@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { auth, onAuthStateChanged, db, collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc, collectionGroup, limit, orderBy } from './lib/firebase';
 import Auth from './components/Auth';
@@ -15,10 +15,13 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { Home, Search, PlusSquare, Play, MessageCircle, User, LogOut, Bell, Shield, AlertTriangle, Phone, PhoneOff, Video, MicOff, VideoOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+import { useNotificationSound } from './hooks/useNotificationSound';
+
 function GlobalCallListener({ user }: { user: any }) {
   const [activeCall, setActiveCall] = useState<any>(null);
   const [caller, setCaller] = useState<any>(null);
   const navigate = useNavigate();
+  const { startCallRinging, stopCallRinging } = useNotificationSound();
 
   useEffect(() => {
     if (!user) return;
@@ -36,6 +39,7 @@ function GlobalCallListener({ user }: { user: any }) {
         const firstDoc = snapshot.docs[0];
         const callData = { id: firstDoc.id, ref: firstDoc.ref, ...firstDoc.data() } as any;
         setActiveCall(callData);
+        startCallRinging();
 
         // Fetch caller info
         const callerSnap = await getDoc(doc(db, 'users', callData.callerId));
@@ -45,17 +49,21 @@ function GlobalCallListener({ user }: { user: any }) {
       } else {
         setActiveCall(null);
         setCaller(null);
+        stopCallRinging();
       }
     }, (error) => {
       console.error('GlobalCallListener Error:', error);
-      // Don't throw here to avoid crashing the app, just log
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      stopCallRinging();
+    };
   }, [user]);
 
   const handleCallAction = async (action: 'accept' | 'decline') => {
     if (!activeCall) return;
+    stopCallRinging();
     try {
       if (action === 'accept') {
         await updateDoc(activeCall.ref, { status: 'connected' });
@@ -145,6 +153,7 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
   const [isEmailVerified, setIsEmailVerified] = useState(false);
+  const lastUnreadCounts = useRef<Record<string, number>>({});
 
   useEffect(() => {
     let unsubscribeUserDoc: (() => void) | null = null;
@@ -248,6 +257,9 @@ export default function App() {
     };
   }, [user]);
 
+  const { playMessageSound } = useNotificationSound();
+  const location = useLocation();
+
   useEffect(() => {
     if (!user) return;
 
@@ -263,10 +275,6 @@ export default function App() {
     });
 
     // Listen for unread messages
-    // This is a bit complex because messages are in subcollections.
-    // For now, we'll listen to chats where the user is a participant and has unread messages.
-    // A better way would be a global 'unread_messages' count or checking each chat.
-    // Let's simplify: check all chats the user is in.
     const chatsQuery = query(
       collection(db, 'chats'),
       where('participants', 'array-contains', user.uid)
@@ -274,11 +282,48 @@ export default function App() {
     
     const unsubscribeChats = onSnapshot(chatsQuery, (snapshot) => {
       let totalUnread = 0;
+      let shouldPlaySound = false;
+
+      snapshot.docChanges().forEach(change => {
+        if (change.type === 'modified') {
+          const data = change.doc.data();
+          const chatId = change.doc.id;
+          
+          // Find the previous version of this doc in the current snapshot
+          // Actually, docChanges gives us the new data. 
+          // We need to know if unread count for the current user increased.
+          const currentUnread = data.unreadCount?.[user.uid] || 0;
+          
+          // We can't easily get the "previous" unread count from the snapshot alone
+          // without storing it in a ref.
+          const prevUnread = lastUnreadCounts.current[chatId] || 0;
+          
+          if (currentUnread > prevUnread) {
+            // Only play if not in THIS specific chat room
+            if (location.pathname !== `/messages/${chatId}`) {
+              shouldPlaySound = true;
+            }
+          }
+          
+          // Update ref
+          lastUnreadCounts.current[chatId] = currentUnread;
+        } else if (change.type === 'added') {
+          const data = change.doc.data();
+          const chatId = change.doc.id;
+          lastUnreadCounts.current[chatId] = data.unreadCount?.[user.uid] || 0;
+        }
+      });
+
       snapshot.docs.forEach(chatDoc => {
         const chatData = chatDoc.data();
         const unreadCount = chatData.unreadCount?.[user.uid] || 0;
         totalUnread += unreadCount;
       });
+
+      if (shouldPlaySound) {
+        playMessageSound();
+      }
+
       setUnreadMessages(totalUnread);
     }, (error) => {
       console.error('App: Chats listener error:', error);
@@ -288,7 +333,7 @@ export default function App() {
       unsubscribeNotifications();
       unsubscribeChats();
     };
-  }, [user]);
+  }, [user, location.pathname]);
 
   if (!isAuthReady) {
     return (
