@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-const MESSAGE_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2359/2359-preview.mp3';
+const MESSAGE_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3';
 const CALL_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/1350/1350-preview.mp3';
 const TYPING_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3';
+const INDICATOR_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2359/2359-preview.mp3';
 
 export function useNotificationSound() {
   const [soundEnabled, setSoundEnabled] = useState(() => {
@@ -13,6 +14,7 @@ export function useNotificationSound() {
   const messageAudio = useRef<HTMLAudioElement | null>(null);
   const callAudio = useRef<HTMLAudioElement | null>(null);
   const typingAudio = useRef<HTMLAudioElement | null>(null);
+  const indicatorAudio = useRef<HTMLAudioElement | null>(null);
   const lastTypingTime = useRef<number>(0);
 
   useEffect(() => {
@@ -29,6 +31,10 @@ export function useNotificationSound() {
     typingAudio.current.volume = 0.15;
     typingAudio.current.preload = 'auto';
 
+    indicatorAudio.current = new Audio(INDICATOR_SOUND_URL);
+    indicatorAudio.current.volume = 0.2;
+    indicatorAudio.current.preload = 'auto';
+
     localStorage.setItem('notifications_sound_enabled', JSON.stringify(soundEnabled));
 
     return () => {
@@ -38,6 +44,7 @@ export function useNotificationSound() {
       }
       messageAudio.current = null;
       typingAudio.current = null;
+      indicatorAudio.current = null;
     };
   }, [soundEnabled]);
 
@@ -83,6 +90,12 @@ export function useNotificationSound() {
     }
   }, [soundEnabled]);
 
+  const playIndicatorSound = useCallback(() => {
+    if (!soundEnabled || !indicatorAudio.current) return;
+    indicatorAudio.current.currentTime = 0;
+    indicatorAudio.current.play().catch(err => console.warn('Indicator sound blocked:', err));
+  }, [soundEnabled]);
+
   const toggleSound = () => setSoundEnabled((prev: boolean) => !prev);
 
   return { 
@@ -91,6 +104,7 @@ export function useNotificationSound() {
     playMessageSound, 
     startCallRinging, 
     stopCallRinging,
-    playTypingSound 
+    playTypingSound,
+    playIndicatorSound
   };
 }

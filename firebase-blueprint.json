@@ -73,7 +73,8 @@
         "id": { "type": "string" },
         "participants": { "type": "array", "items": { "type": "string" } },
         "lastMessage": { "type": "string" },
-        "lastMessageAt": { "type": "string", "format": "date-time" }
+        "lastMessageAt": { "type": "string", "format": "date-time" },
+        "typing": { "type": "object", "description": "A map of user IDs to their typing status." }
       },
       "required": ["participants", "lastMessageAt"]
     },

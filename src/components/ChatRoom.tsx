@@ -10,7 +10,7 @@ import { useUpload } from '../context/UploadContext';
 import { 
   ChevronLeft, Info, Send, Smile, Image as ImageIcon, Check, CheckCheck, 
   Phone, Video, Mic, Paperclip, X, Play, Pause, Square, MoreVertical, 
-  Download, Maximize2, Volume2, VolumeX, MicOff, VideoOff, PhoneOff
+  Download, Maximize2, Volume2, VolumeX, MicOff, VideoOff, PhoneOff, MessageCircle
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
@@ -133,6 +133,8 @@ export default function ChatRoom() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isOtherUserTyping, setIsOtherUserTyping] = useState(false);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const { startUpload, attachCallback, tasks } = useUpload();
   const currentTask = tasks.find(t => t.id === activeTaskId);
@@ -170,7 +172,8 @@ export default function ChatRoom() {
     playMessageSound, 
     startCallRinging, 
     stopCallRinging,
-    playTypingSound 
+    playTypingSound,
+    playIndicatorSound
   } = useNotificationSound();
   
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -218,6 +221,24 @@ export default function ChatRoom() {
       }
     };
     fetchOtherUser();
+    
+    // Listen for typing status
+    let prevTypingStatus = false;
+    const unsubscribeTyping = onSnapshot(doc(db, 'chats', chatId), (snapshot) => {
+      if (snapshot.exists()) {
+        const typing = snapshot.data().typing || {};
+        const participants = snapshot.data().participants || [];
+        const otherId = participants.find((p: string) => p !== auth.currentUser?.uid);
+        const isTyping = otherId ? !!typing[otherId] : false;
+        
+        if (isTyping && !prevTypingStatus) {
+          playIndicatorSound();
+        }
+        
+        setIsOtherUserTyping(isTyping);
+        prevTypingStatus = isTyping;
+      }
+    });
 
     // Reset unread count
     const resetUnread = async () => {
@@ -314,9 +335,37 @@ export default function ChatRoom() {
     return () => {
       unsubscribeMessages();
       unsubscribeCalls();
+      unsubscribeTyping();
       endCall();
     };
   }, [chatId]);
+
+  const updateTypingStatus = async (isTyping: boolean) => {
+    if (!chatId || !auth.currentUser) return;
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        [`typing.${auth.currentUser.uid}`]: isTyping
+      });
+    } catch (err) {
+      // Ignore errors for typing status
+    }
+  };
+
+  const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewMessage(e.target.value);
+    
+    // Update typing status in Firestore
+    updateTypingStatus(true);
+    
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      updateTypingStatus(false);
+    }, 3000);
+
+    if (e.target.value.length > 0) {
+      playTypingSound();
+    }
+  };
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
@@ -513,6 +562,8 @@ export default function ChatRoom() {
 
     const text = newMessage;
     setNewMessage('');
+    updateTypingStatus(false);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
     try {
       const chatRef = doc(db, 'chats', chatId);
@@ -1039,6 +1090,42 @@ export default function ChatRoom() {
           </div>
         )}
 
+        {/* Typing Indicator */}
+        <AnimatePresence>
+          {isOtherUserTyping && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="px-4 py-1.5 flex items-center gap-2"
+            >
+              <div className="flex items-center gap-1.5">
+                <MessageCircle className="w-3 h-3 text-purple-400 animate-pulse" />
+                <div className="flex gap-1">
+                  <motion.div 
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ repeat: Infinity, duration: 0.6, delay: 0 }}
+                    className="w-1 h-1 bg-purple-400 rounded-full" 
+                  />
+                  <motion.div 
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ repeat: Infinity, duration: 0.6, delay: 0.2 }}
+                    className="w-1 h-1 bg-purple-400 rounded-full" 
+                  />
+                  <motion.div 
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ repeat: Infinity, duration: 0.6, delay: 0.4 }}
+                    className="w-1 h-1 bg-purple-400 rounded-full" 
+                  />
+                </div>
+              </div>
+              <span className="text-[10px] font-bold text-purple-500 italic">
+                {otherUser?.displayName || 'Someone'} is typing...
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Input Area */}
         <div className="p-4">
           <form onSubmit={handleSend} className="flex items-center gap-2">
@@ -1089,12 +1176,7 @@ export default function ChatRoom() {
                   placeholder="Type a message..."
                   className="w-full bg-gray-100 border-none rounded-2xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-purple-500/20 transition-all"
                   value={newMessage}
-                  onChange={(e) => {
-                    setNewMessage(e.target.value);
-                    if (e.target.value.length > 0) {
-                      playTypingSound();
-                    }
-                  }}
+                  onChange={handleTyping}
                 />
               )}
             </div>

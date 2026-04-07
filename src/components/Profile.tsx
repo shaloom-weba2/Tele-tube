@@ -181,6 +181,10 @@ export default function Profile() {
           unreadCount: {
             [auth.currentUser.uid]: 0,
             [userId]: 0
+          },
+          typing: {
+            [auth.currentUser.uid]: false,
+            [userId]: false
           }
         });
         navigate(`/messages/${newChatRef.id}`);

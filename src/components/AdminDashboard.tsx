@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db, collection, query, getDocs, deleteDoc, doc, onSnapshot, auth, updateDoc, writeBatch, serverTimestamp } from '../lib/firebase';
+import { db, collection, query, getDocs, deleteDoc, doc, onSnapshot, auth, updateDoc, setDoc, writeBatch, serverTimestamp } from '../lib/firebase';
 import { Users, FileText, Trash2, Shield, AlertCircle, CheckCircle, Bell, Send, Settings, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -129,10 +129,10 @@ export default function AdminDashboard() {
     setIsUpdatingPassword(true);
     setPasswordError('');
     try {
-      await updateDoc(doc(db, 'admin_config', 'auth'), {
+      await setDoc(doc(db, 'admin_config', 'auth'), {
         password: newPassword,
         updatedAt: serverTimestamp()
-      });
+      }, { merge: true });
       setPasswordSuccess(true);
       setNewPassword('');
       setConfirmPassword('');
