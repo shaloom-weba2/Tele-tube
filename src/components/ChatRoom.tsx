@@ -225,6 +225,7 @@ export default function ChatRoom() {
               }
             }, (error) => {
               console.error('ChatRoom: Other user listener error:', error);
+              handleFirestoreError(error, OperationType.GET, `users/${otherId}`);
             });
           }
         }
@@ -252,6 +253,8 @@ export default function ChatRoom() {
         setIsOtherUserTyping(isTyping);
         prevTypingStatus = isTyping;
       }
+    }, (error) => {
+      console.error('ChatRoom: Typing listener error:', error);
     });
 
     // Reset unread count
@@ -479,6 +482,9 @@ export default function ChatRoom() {
               }
             }).catch(e => console.error('Error setting remote description (answer):', e));
           }
+        }, (error) => {
+          console.error('ChatRoom: Answer listener error:', error);
+          handleFirestoreError(error, OperationType.GET, `chats/${chatId}/calls/${callId}`);
         });
         signalingUnsubscribesRef.current.push(unsubAnswer);
       } else {
@@ -501,6 +507,9 @@ export default function ChatRoom() {
             await pc.setLocalDescription(answerDescription);
             await updateDoc(callRef, { answer: { type: answerDescription.type, sdp: answerDescription.sdp } });
           }
+        }, (error) => {
+          console.error('ChatRoom: Offer listener error:', error);
+          handleFirestoreError(error, OperationType.GET, `chats/${chatId}/calls/${callId}`);
         });
         signalingUnsubscribesRef.current.push(unsubOffer);
       }
@@ -518,6 +527,9 @@ export default function ChatRoom() {
             }
           }
         });
+      }, (error) => {
+        console.error('ChatRoom: ICE candidates listener error:', error);
+        handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/calls/${callId}/${remoteCandidateCollection}`);
       });
       signalingUnsubscribesRef.current.push(unsubCandidates);
 
