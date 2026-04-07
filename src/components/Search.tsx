@@ -33,22 +33,32 @@ export default function UserSearch() {
 
       setLoading(true);
       try {
-        // Simple prefix search
-        const usersRef = collection(db, 'users');
-        const q = query(
-          usersRef,
-          where('displayName', '>=', searchTerm),
-          where('displayName', '<=', searchTerm + '\uf8ff'),
-          limit(10)
+        const searchTerms = new Set([
+          searchTerm.trim(),
+          searchTerm.trim().toLowerCase(),
+          searchTerm.trim().charAt(0).toUpperCase() + searchTerm.trim().slice(1).toLowerCase(),
+          searchTerm.trim().toUpperCase()
+        ]);
+
+        const queries = Array.from(searchTerms).map(term => 
+          query(
+            collection(db, 'users'),
+            where('displayName', '>=', term),
+            where('displayName', '<=', term + '\uf8ff'),
+            limit(10)
+          )
         );
+
+        const snapshots = await Promise.all(queries.map(q => getDocs(q)));
+        const resultsMap = new Map();
         
-        const querySnapshot = await getDocs(q);
-        const users: UserProfile[] = [];
-        querySnapshot.forEach((doc) => {
-          users.push(doc.data() as UserProfile);
+        snapshots.forEach(snap => {
+          snap.docs.forEach(doc => {
+            resultsMap.set(doc.id, { uid: doc.id, ...doc.data() });
+          });
         });
-        
-        setResults(users);
+
+        setResults(Array.from(resultsMap.values()).slice(0, 20) as UserProfile[]);
       } catch (error) {
         console.error("Error searching users:", error);
       } finally {

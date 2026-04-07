@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Search, UserPlus, Users, MessageCircle, Check } from 'lucide-react';
-import { db, collection, query, where, getDocs, addDoc, serverTimestamp, auth, doc, getDoc } from '../lib/firebase';
+import { db, collection, query, where, getDocs, addDoc, serverTimestamp, auth, doc, getDoc, limit } from '../lib/firebase';
 import { useNavigate } from 'react-router-dom';
 
 interface UserProfile {
@@ -21,17 +21,46 @@ export function CreateGroupModal({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     const searchUsers = async () => {
-      if (searchTerm.length < 2) {
+      if (searchTerm.trim().length < 2) {
         setSearchResults([]);
         return;
       }
-      const q = query(
-        collection(db, 'users'),
-        where('displayName', '>=', searchTerm),
-        where('displayName', '<=', searchTerm + '\uf8ff')
-      );
-      const snap = await getDocs(q);
-      setSearchResults(snap.docs.map(doc => ({ uid: doc.id, ...doc.data() })) as UserProfile[]);
+      
+      setLoading(true);
+      try {
+        const searchTerms = new Set([
+          searchTerm.trim(),
+          searchTerm.trim().toLowerCase(),
+          searchTerm.trim().charAt(0).toUpperCase() + searchTerm.trim().slice(1).toLowerCase(),
+          searchTerm.trim().toUpperCase()
+        ]);
+
+        const queries = Array.from(searchTerms).map(term => 
+          query(
+            collection(db, 'users'),
+            where('displayName', '>=', term),
+            where('displayName', '<=', term + '\uf8ff'),
+            limit(10)
+          )
+        );
+
+        const snapshots = await Promise.all(queries.map(q => getDocs(q)));
+        const resultsMap = new Map();
+        
+        snapshots.forEach(snap => {
+          snap.docs.forEach(doc => {
+            if (doc.id !== auth.currentUser?.uid) {
+              resultsMap.set(doc.id, { uid: doc.id, ...doc.data() });
+            }
+          });
+        });
+
+        setSearchResults(Array.from(resultsMap.values()).slice(0, 20) as UserProfile[]);
+      } catch (error) {
+        console.error('Error searching users:', error);
+      } finally {
+        setLoading(false);
+      }
     };
     const timeout = setTimeout(searchUsers, 300);
     return () => clearTimeout(timeout);
